@@ -1,0 +1,2068 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>거래소 시세 차트</title>
+<style>
+  :root{
+    --bg:#14161b;
+    --panel:#1b1e25;
+    --panel-2:#22262f;
+    --line:#2c313c;
+    --text:#e9e7df;
+    --dim:#8a8f9c;
+    --accent:#cf9d55;
+    --up:#57b98c;
+    --down:#e0665c;
+    --mono: ui-monospace, 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Malgun Gothic', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--sans); padding:24px; min-height:100vh;
+  }
+  .wrap{max-width:920px; margin:0 auto;}
+
+  .board{
+    border:1px solid var(--line); border-radius:10px; background:var(--panel);
+    padding:18px 20px; margin-bottom:16px;
+  }
+  .board-top{
+    display:flex; justify-content:space-between; align-items:baseline;
+    border-bottom:1px solid var(--line); padding-bottom:12px; margin-bottom:14px;
+  }
+  .ticker{font-family:var(--mono); font-size:14px; color:var(--dim); letter-spacing:0.08em;}
+  .ticker-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .ticker-row .fallback-toggle{margin-top:0; margin-left:auto;}
+  .api-key-inline{width:130px; font-size:11px; padding:4px 8px; color:var(--dim); opacity:0.75;}
+  .api-key-inline:focus{opacity:1;}
+  h1{font-size:22px; margin:2px 0 0 0; font-weight:600;}
+  .title-row{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;}
+  .title-row .mini-details{margin-top:2px;}
+  .pct{font-family:var(--mono); font-size:20px; font-weight:600;}
+  .pct.up{color:var(--up);} .pct.down{color:var(--down);}
+
+  .controls{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+  .controls .inline-hint{margin-top:0; margin-left:2px;}
+  input, select, button{
+    background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+    border-radius:6px; padding:8px 10px; font-size:14px; font-family:var(--sans);
+  }
+  input:focus, select:focus{outline:1px solid var(--accent);}
+  input[type=text]{width:170px;}
+  button{
+    background:var(--accent); color:#1a1206; border:none; font-weight:600; cursor:pointer;
+  }
+  button:hover{filter:brightness(1.08);}
+  button:active{filter:brightness(0.95);}
+  button.ghost{background:transparent; color:var(--dim); border:1px solid var(--line); font-weight:500;}
+
+  .stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(110px,1fr)); gap:1px; background:var(--line); border-radius:8px; overflow:hidden; margin-bottom:8px;}
+  .stat{background:var(--panel); padding:12px 14px;}
+  .stat .label{font-size:12px; color:var(--dim); letter-spacing:0.05em; text-transform:uppercase;}
+  .stat .value{font-family:var(--mono); font-size:18px; margin-top:4px;}
+  .stat .value.tight{font-size:13px; white-space:nowrap;}
+  .stat .value.tighter{font-size:11.5px; white-space:nowrap;}
+
+  .analysis-verdict{font-size:16px; font-weight:700; padding-bottom:10px; margin-bottom:6px; border-bottom:1px solid var(--line);}
+  .analysis-row{display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:6px 0; font-size:14px;}
+  .analysis-row .a-label{color:var(--dim);}
+  .analysis-row .a-value{font-family:var(--mono); font-weight:600; text-align:right;}
+  .analysis-row.a-note{font-size:12.5px; color:var(--dim); padding-top:2px;}
+  .analysis-row.a-note .a-value{font-weight:400; color:var(--dim); text-align:left;}
+  .analysis-row.a-warn .a-value{color:var(--down); font-weight:600; text-align:left;}
+
+  .chart-box{position:relative;}
+  .zoom-toolbar{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;}
+  .zoom-toolbar button{padding:6px 10px; font-size:13px;}
+  .chart-topbar{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px;}
+  .chart-controls{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .chart-controls select, .chart-controls button{padding:6px 10px; font-size:13px;}
+  .chart-quickstats{display:flex; gap:18px; margin-left:auto; font-family:var(--mono); font-size:17px; color:var(--dim);}
+  .chart-quickstats b{color:#ffffff; font-weight:700; font-size:20px; margin-left:6px;}
+  .alert-item{display:flex; align-items:center; gap:8px; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:8px 10px;}
+  .alert-item.fired{border-color:var(--accent);}
+  .alert-item .txt{font-family:var(--mono); font-size:13px; flex:1;}
+  .alert-item button{padding:4px 8px; font-size:12px;}
+  .alert-hit{color:var(--accent); margin-left:8px;}
+  .watch-item{display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:8px 10px; font-family:var(--mono); font-size:13px;}
+  .watch-item .w-name{cursor:pointer; text-decoration:underline; text-decoration-color:var(--line); flex:1; min-width:80px;}
+  .watch-item .w-name:hover{color:var(--accent);}
+  .watch-item .w-price{color:#fff; font-weight:700;}
+  .watch-item .w-count{color:var(--dim);}
+  .watch-item .w-updated{color:var(--dim); font-size:11px; white-space:nowrap;}
+  .watch-item button{padding:4px 8px; font-size:12px;}
+  .watch-item button.toggle-on{background:var(--accent); color:#1a1208; border-color:var(--accent); font-weight:700;}
+  .watch-item button.toggle-on.listing{background:var(--up); color:#062012; border-color:var(--up);}
+  .watch-item-wrap{display:flex; flex-direction:column; gap:6px;}
+  .watch-alert-panel{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px 12px; margin-left:14px; display:flex; flex-direction:column; gap:8px;}
+  .watch-alert-form{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .watch-alert-form input[type=number]{width:130px;}
+  .watch-alert-subform{display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding-top:6px; border-top:1px dashed var(--line); font-size:12.5px; color:var(--dim);}
+  .watch-alert-subform input[type=number]{width:70px;}
+  .alert-item .note{color:var(--dim); font-size:11.5px; margin-left:6px;}
+  svg{width:100%; height:auto; display:block;}
+  .candle-up{fill:var(--up); stroke:var(--up);}
+  .candle-down{fill:var(--down); stroke:var(--down);}
+  .wick{stroke-width:1.8;}
+  .axis-label{fill:#c7cbd6; font-family:var(--mono); font-size:12px; font-weight:600;}
+  .axis-label-weekday{font-size:14px; font-weight:700; fill:#ffffff;}
+  .grid-line{stroke:var(--line); stroke-width:1; opacity:0.8;}
+  .zoom-box{fill:var(--accent); opacity:0.15; stroke:var(--accent); stroke-width:1; stroke-dasharray:3 2;}
+  #chartArea svg{touch-action:none;}
+
+  .msg{color:var(--dim); font-size:14px; padding:40px 0; text-align:center;}
+  .msg.error{color:var(--down);}
+
+  .fallback{margin-top:10px;}
+  .fallback textarea{
+    width:100%; height:100px; background:var(--panel-2); border:1px solid var(--line);
+    color:var(--text); border-radius:6px; padding:8px; font-family:var(--mono); font-size:12px;
+  }
+  .fallback-toggle{color:var(--dim); font-size:13px; cursor:pointer; text-decoration:underline; margin-top:8px; display:inline-block;}
+  .hint{color:var(--dim); font-size:13px; margin-top:6px; line-height:1.5;}
+  .callout{
+    background:rgba(207,157,85,0.10); border:1px solid var(--accent); border-radius:8px;
+    padding:10px 14px; font-size:13px; color:var(--text); line-height:1.5; margin-top:8px;
+  }
+
+  .mini-details{margin-top:8px;}
+  .mini-details summary{
+    cursor:pointer; color:var(--accent); font-size:13px; list-style:none;
+    display:inline-flex; align-items:center; gap:6px; user-select:none;
+  }
+  .mini-details summary::-webkit-details-marker{display:none;}
+  .mini-details summary::before{content:'▸'; font-size:18px; color:var(--accent); font-weight:700;}
+  .mini-details[open] summary::before{content:'▾';}
+  .mini-details-body{margin-top:6px; color:var(--dim); font-size:13px; line-height:1.5;}
+  .mini-details-body p{margin:0 0 6px 0;}
+  .mini-details-body p:last-child{margin-bottom:0;}
+
+  .stats-top{margin-top:8px; margin-bottom:0 !important; border-bottom-left-radius:0; border-bottom-right-radius:0;}
+  .stats-bottom{margin-top:0 !important; border-top-left-radius:0; border-top-right-radius:0; border-top:1px solid var(--line);}
+
+  .section-divider{border-top:1px solid var(--line); margin:14px 0 2px;}
+  #watchDetails{padding-top:4px;}
+  #watchDetails summary{
+    cursor:pointer; padding:10px 0; font-size:14px; color:var(--dim); letter-spacing:0.05em;
+    list-style:none; display:flex; align-items:center; gap:8px; user-select:none;
+  }
+  #watchDetails summary::-webkit-details-marker{display:none;}
+  #watchDetails summary::before{content:'▸'; color:var(--accent); font-size:18px; line-height:1; font-weight:700;}
+  #watchDetails[open] summary::before{content:'▾';}
+  #watchDetails .count-badge{
+    background:var(--panel-2); color:var(--text); border-radius:10px; padding:1px 8px;
+    font-family:var(--mono); font-size:12px;
+  }
+  #watchDetails .section-body{padding-bottom:10px;}
+  .tooltip{
+    position:absolute; background:var(--panel-2); border:1px solid var(--line); border-radius:6px;
+    padding:8px 10px; font-family:var(--mono); font-size:12px; pointer-events:none; display:none;
+    white-space:nowrap; max-width:calc(100% - 8px); box-shadow:0 4px 12px rgba(0,0,0,0.4); z-index:5;
+  }
+  @media (max-width:360px){
+    .tooltip{ white-space:normal; font-size:11px; }
+  }
+</style>
+</head>
+<script src="https://t1.kakaocdn.net/kakao_js_sdk/2.7.4/kakao.min.js"></script>
+<body>
+<div class="wrap">
+
+  <div class="board">
+    <div class="board-top">
+      <div style="width:100%;">
+        <div class="ticker-row">
+          <span class="ticker" id="tickerId">KIND_ID —</span>
+          <input type="text" id="apiKey" class="api-key-inline" placeholder="API 키">
+          <span class="fallback-toggle" id="fallbackToggle">API 호출이 안 되면 → JSON 직접 붙여넣기</span>
+        </div>
+        <div class="title-row">
+          <h1 id="itemTitle">아이템을 검색하세요</h1>
+          <details class="mini-details">
+            <summary>차트 조작법 보기</summary>
+            <div class="mini-details-body">
+              <p>차트 위에서 드래그하면 그 구간이 확대돼요.</p>
+              <p>캔들을 탭하면 상세정보가 뜨고, 확대 중엔 "◀ 이전 구간 / 다음 구간 ▶" 버튼으로 좌우 이동할 수 있어요.</p>
+              <p>더블탭(더블클릭)하면 전체로 리셋되고, 확대 중엔 위 "한 단계 뒤로" 버튼으로 되돌아갈 수 있어요 (PC는 우클릭도 가능).</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="itemName" placeholder="아이템 이름 (예: 파동의 영혼석)" value="파동의 영혼석">
+      <button id="loadBtnTop">조회</button>
+      <span class="hint inline-hint">※ 조회하면 자동 추가·이름 클릭 시 차트 이동·"알림" 버튼으로 가격 알림 설정</span>
+    </div>
+    <div class="hint" id="statusHint"></div>
+    <div class="fallback" id="fallbackBox" style="display:none;">
+      <div class="hint">브라우저 CORS 정책 때문에 직접 호출이 막힐 수 있습니다. 그럴 땐 curl이나 Postman 등으로 아래 두 응답을 받아 각각 붙여넣으세요.</div>
+      <div class="hint">① /market/items?search=이름 응답 전체를 여기에:</div>
+      <textarea id="itemsJson" placeholder='{"data":[{"kind_id":1,"name":"...","parent_category":"..."}], "pagination":{...}}'></textarea>
+      <div class="hint" style="margin-top:8px;">② /market/prices/history?kind_id=..&days=.. 응답 전체를 여기에:</div>
+      <textarea id="historyJson" placeholder='{"kind_id":1,"name":"...","resolution":"hourly","points":[...]}'></textarea>
+      <button id="pasteBtn" style="margin-top:8px;">붙여넣은 JSON으로 그리기</button>
+    </div>
+
+    <div class="section-divider"></div>
+
+    <details id="watchDetails" open>
+      <summary>감시 목록 <span class="count-badge" id="watchCount">0</span></summary>
+      <div class="section-body" id="watchBox">
+        <div id="watchList" style="display:flex; flex-direction:column; gap:8px;"></div>
+      </div>
+    </details>
+
+    <div class="section-divider"></div>
+
+    <details id="notifyDetails">
+      <summary>🔔 알림 방식 설정</summary>
+      <div class="section-body">
+        <div class="watch-alert-panel" style="margin-left:0;">
+          <div class="watch-alert-form">
+            <span style="min-width:120px;">🖥 브라우저(윈도우) 알림</span>
+            <span class="hint" id="browserNotifyStatus" style="margin:0;">확인 중...</span>
+            <button class="ghost" id="enableBrowserNotifyBtn" onclick="requestBrowserNotifyPermission()">알림 켜기</button>
+          </div>
+          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+            <span style="min-width:120px;">💬 카카오톡 (나에게 보내기)</span>
+            <span class="hint" id="kakaoStatus" style="margin:0;">미설정</span>
+          </div>
+          <div class="watch-alert-subform">
+            <input type="text" id="kakaoJsKey" placeholder="Kakao JavaScript 키">
+            <input type="text" id="kakaoRestKey" placeholder="Kakao REST API 키">
+            <button class="ghost" id="kakaoInitBtn" onclick="initKakao()">키 저장</button>
+            <button class="ghost" id="kakaoLoginBtn" onclick="kakaoLogin()" disabled>카카오 로그인</button>
+            <button class="ghost" id="kakaoTestBtn" onclick="kakaoSendTest()" disabled>테스트 전송</button>
+          </div>
+          <div class="hint">
+            Kakao Developers(developers.kakao.com) → 내 애플리케이션 → 앱 키에서 <b>JavaScript 키</b>와 <b>REST API 키</b>를 둘 다 여기에 입력하세요.
+            <b>플랫폼 키 → JavaScript 키 → JavaScript SDK 도메인</b>과 <b>앱 설정 → 카카오 로그인 → Redirect URI</b> 두 곳에 지금 이 페이지 주소(<code id="redirectUriHint"></code>)를 정확히 등록해야 로그인이 됩니다.
+            "카카오 로그인 → 동의항목"에서 "카카오톡 메시지 전송"을 사용 설정으로 켜둬야 합니다.
+          </div>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="stats stats-top" id="statsRow" style="display:none;">
+    <div class="stat"><div class="label">최저</div><div class="value" id="stMin">—</div></div>
+    <div class="stat"><div class="label">최고</div><div class="value" id="stMax">—</div></div>
+    <div class="stat"><div class="label">평균</div><div class="value" id="stAvg">—</div></div>
+    <div class="stat"><div class="label">현재</div><div class="value" id="stCur">—</div></div>
+    <div class="stat"><div class="label">현재가</div><div class="value tight" id="stPct">—</div></div>
+    <div class="stat"><div class="label">평균 대비</div><div class="value" id="stDev">—</div></div>
+  </div>
+
+  <div class="stats stats-bottom" id="snapRow" style="display:none;">
+    <div class="stat"><div class="label">수량 변동(24h)</div><div class="value tighter" id="snCountChange">—</div></div>
+    <div class="stat"><div class="label">1시간 가격 변동률</div><div class="value" id="snPct1h">—</div></div>
+    <div class="stat"><div class="label">24시간 가격 변동률</div><div class="value" id="snPct24h">—</div></div>
+    <div class="stat"><div class="label">7일 가격 변동률</div><div class="value" id="snPct7d">—</div></div>
+  </div>
+  <div class="callout" id="snapNote" style="display:none;"></div>
+
+  <div class="board chart-box">
+    <div class="chart-topbar">
+      <div class="chart-controls" id="chartControls">
+        <select id="daysSel">
+          <option value="1">1일 (10분봉)</option>
+          <option value="7" selected>7일 (1시간봉)</option>
+          <option value="30">30일 (일봉)</option>
+          <option value="90">90일 (일봉)</option>
+        </select>
+        <select id="candleSel" style="display:none;"></select>
+        <button id="loadBtn">조회</button>
+        <button class="ghost" id="autoBtn">자동갱신 OFF</button>
+      </div>
+      <div class="zoom-toolbar" id="zoomToolbar" style="display:none;">
+        <button class="ghost" id="panLeftBtn" style="display:none;">◀ 이전 구간</button>
+        <button class="ghost" id="panRightBtn" style="display:none;">다음 구간 ▶</button>
+        <button class="ghost" id="zoomBackBtn" style="display:none;">한 단계 뒤로</button>
+        <button class="ghost" id="zoomResetBtn" style="display:none;">확대 초기화</button>
+      </div>
+      <div class="chart-quickstats" id="chartQuickStats" style="display:none;">
+        <span>현재 최저가 <b id="cqsMin">—</b></span>
+        <span>등록 수량 <b id="cqsCount">—</b></span>
+      </div>
+    </div>
+    <div id="chartArea"><div class="msg">아이템을 검색하고 조회 버튼을 눌러주세요.</div></div>
+    <div class="tooltip" id="tooltip"></div>
+  </div>
+
+  <div class="board" id="analysisBox" style="display:none;">
+    <div style="font-size:14px; color:var(--dim); margin-bottom:8px; letter-spacing:0.05em;" id="analysisTitle">📊 가격 분석</div>
+    <div id="analysisList"></div>
+  </div>
+
+</div>
+
+<script>
+const BASE_URL = "https://open.mabimobi.life/v1";
+let autoTimer = null;
+let lastKindId = null;
+let lastItemName = null;
+// days(기간) 드롭다운을 바꿀 때마다 API를 다시 부르면 분당 30회 한도를 금방 잡아먹으므로,
+// 같은 아이템 내에서 한 번 불러온 (days -> 응답) 조합은 캐시해두고 재사용한다.
+// 진짜로 새 데이터가 필요할 때(조회 버튼 클릭, 자동갱신)만 캐시를 갱신한다.
+let historyCacheByKind = {}; // { [kind_id]: { [days]: { histData, ts } } } — 아이템이 바뀌어도 유지됨(감시목록 탭 전환 시 재사용)
+let baseResolution = null;   // API가 실제로 준 원본 해상도 ('10min' | 'hourly' | 'daily')
+let basePoints = [];         // 원본 해상도 그대로의 (필터링된) 포인트
+let baseMin = 0, baseMax = 0;
+
+let currentChart = null;  // 마지막 렌더의 좌표 변환 함수들(xTime/invX/invY 등)
+let lastLoadedKindId = null; // 마지막으로 로드했던 kind_id (다른 아이템으로 바뀌면 확대 초기화용)
+let lastCandleMinutes = null; // 사용자가 마지막으로 고른 봉 단위(분) — 자동갱신 시에도 유지
+let alertsByKind = {}; // { [kind_id]: [{id, price, dir:'above'|'below', fired}] } — 아이템별 가격 알림
+let alertIdSeq = 1;
+let titleFlashTimer = null;
+let watchList = []; // [{kind_id, name, price, soldOut, count, newListingAlert, newListingThreshold}] — 동시 감시 목록
+let focusKindId = null;   // "집중 감시" 중인 kind_id — 이 아이템만 더 빠른 주기로 갱신
+let focusTimer = null;
+const FOCUS_INTERVAL_MS = 15000; // 30회/분 한도 안에서 안전하게 잡은 집중 감시 주기(15초)
+let zoomRange = null; // {t1, t2} — 드래그로 확대한 시간 구간 (밀리초 타임스탬프). null이면 전체 구간 표시
+let zoomStack = [];   // 이전 확대 단계들 (null도 포함 가능 = "전체 구간이었음"). '한 단계 뒤로'용
+let lastSnapshot = null;     // 실시간 매물 스냅샷 (등록 수량, 1h/24h/7d 변동) — 종합 판단에 반영
+let lastAnalysisCtx = null;  // renderAnalysis에 마지막으로 넘긴 값 — 스냅샷 도착 시 재계산용
+let fullAnalysisCtx = null;  // 전체 조회 기간 기준 분석 컨텍스트 (확대 안 했을 때 사용)
+
+// ---- 새로고침(F5)해도 유지: API 키 / 감시 목록 / 알림 / 마지막 검색어·기간을 localStorage에 저장 ----
+const LS_KEYS = {
+  apiKey: 'ggMarket.apiKey',
+  watchList: 'ggMarket.watchList',
+  alerts: 'ggMarket.alerts',
+  lastItem: 'ggMarket.lastItem',
+  days: 'ggMarket.days',
+  focus: 'ggMarket.focusKindId',
+  kakaoJsKey: 'ggMarket.kakaoJsKey',
+  kakaoRestKey: 'ggMarket.kakaoRestKey',
+};
+
+// 카카오 로그인은 리다이렉트 방식이라 매번 이 페이지로 돌아오므로, 쿼리스트링/해시를 뺀 순수 주소를 고정 리다이렉트 URI로 사용한다.
+function kakaoRedirectUri() {
+  return location.origin + location.pathname;
+}
+
+function saveApiKeyToStorage() {
+  try { localStorage.setItem(LS_KEYS.apiKey, document.getElementById('apiKey').value.trim()); } catch (e) { /* 저장 실패해도 조용히 무시(시크릿모드 등) */ }
+}
+
+function saveSearchStateToStorage() {
+  try {
+    localStorage.setItem(LS_KEYS.lastItem, document.getElementById('itemName').value.trim());
+    localStorage.setItem(LS_KEYS.days, document.getElementById('daysSel').value);
+  } catch (e) {}
+}
+
+// 가격/수량 같은 실시간 값은 새로고침 후 다시 받아오면 되므로 저장하지 않고,
+// 목록 구성(kind_id/name)과 알림 설정(가격 알림, 신규 매물 감지, 집중 감시)만 저장한다.
+function saveWatchStateToStorage() {
+  try {
+    const slim = watchList.map(w => ({ kind_id: w.kind_id, name: w.name, newListingAlert: !!w.newListingAlert, newListingThreshold: w.newListingThreshold || 1 }));
+    localStorage.setItem(LS_KEYS.watchList, JSON.stringify(slim));
+    localStorage.setItem(LS_KEYS.alerts, JSON.stringify(alertsByKind));
+    localStorage.setItem(LS_KEYS.focus, focusKindId === null ? '' : String(focusKindId));
+  } catch (e) {}
+}
+
+function loadStateFromStorage() {
+  try {
+    const savedKey = localStorage.getItem(LS_KEYS.apiKey);
+    if (savedKey) document.getElementById('apiKey').value = savedKey;
+
+    const el = document.getElementById('redirectUriHint');
+    if (el) el.textContent = kakaoRedirectUri();
+
+    const savedKakaoKey = localStorage.getItem(LS_KEYS.kakaoJsKey);
+    if (savedKakaoKey) document.getElementById('kakaoJsKey').value = savedKakaoKey;
+    const savedRestKey = localStorage.getItem(LS_KEYS.kakaoRestKey);
+    if (savedRestKey) document.getElementById('kakaoRestKey').value = savedRestKey;
+    if (savedKakaoKey && window.Kakao) initKakao(); // 로그인 자체는 리다이렉트가 필요해 자동으로는 못 하고, 키 초기화까지만 미리 해둔다
+
+    handleKakaoRedirectIfAny(); // 카카오 로그인 후 이 페이지로 돌아온 상태(?code=...)면 여기서 토큰 교환까지 마무리
+    updateBrowserNotifyStatus();
+
+    const savedItem = localStorage.getItem(LS_KEYS.lastItem);
+    if (savedItem) document.getElementById('itemName').value = savedItem;
+
+    const savedDays = localStorage.getItem(LS_KEYS.days);
+    if (savedDays) document.getElementById('daysSel').value = savedDays;
+
+    const savedAlerts = localStorage.getItem(LS_KEYS.alerts);
+    if (savedAlerts) {
+      alertsByKind = JSON.parse(savedAlerts) || {};
+      let maxId = 0;
+      Object.values(alertsByKind).forEach(list => list.forEach(a => { if (a.id > maxId) maxId = a.id; }));
+      alertIdSeq = maxId + 1;
+    }
+
+    const savedWatch = localStorage.getItem(LS_KEYS.watchList);
+    if (savedWatch) {
+      const slim = JSON.parse(savedWatch) || [];
+      watchList = slim.map(w => ({
+        kind_id: w.kind_id, name: w.name, price: null, soldOut: false, count: null,
+        lastUpdated: null, alertPanelOpen: false, newListingAlert: !!w.newListingAlert,
+        newListingThreshold: w.newListingThreshold || 1,
+      }));
+    }
+
+    const savedFocus = localStorage.getItem(LS_KEYS.focus);
+    if (savedFocus && watchList.some(w => w.kind_id === Number(savedFocus))) {
+      focusKindId = Number(savedFocus);
+      startFocusTimer();
+    }
+  } catch (e) { /* 저장된 값이 깨져 있어도 그냥 빈 상태로 시작 */ }
+}
+
+// 표시용 봉 단위 정의: 원본 해상도별로 몇 개씩 묶어 보여줄지.
+// API가 5분/4시간 등을 직접 주지 않으므로, 원본 캔들을 그룹핑해서 재구성한다.
+const CANDLE_GROUPS = {
+  'minute': [
+    { label: '1분봉 (원본)', minutes: 1 },
+    { label: '5분봉', minutes: 5 },
+    { label: '10분봉', minutes: 10 },
+    { label: '30분봉', minutes: 30 },
+    { label: '1시간봉', minutes: 60 },
+  ],
+  '10min': [
+    { label: '10분봉 (원본)', minutes: 10 },
+    { label: '30분봉', minutes: 30 },
+    { label: '1시간봉', minutes: 60 },
+  ],
+  'hourly': [
+    { label: '1시간봉 (원본)', minutes: 60 },
+    { label: '2시간봉', minutes: 120 },
+    { label: '4시간봉', minutes: 240 },
+  ],
+  'daily': [
+    { label: '일봉 (원본)', minutes: 1440 },
+  ],
+};
+
+// 개수가 아니라 실제 시각(UTC 정시 기준)으로 구간을 나눠 묶는다.
+// 거래 없는 시간이 빠져 있어도 정시 경계(7:00, 8:00 ...)는 항상 고정되도록.
+function aggregateCandles(points, targetMinutes) {
+  const bucketMs = targetMinutes * 60000;
+  const buckets = new Map();
+  for (const p of points) {
+    const t = new Date(p.time).getTime();
+    const key = Math.floor(t / bucketMs) * bucketMs;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(p);
+  }
+  const keys = Array.from(buckets.keys()).sort((a, b) => a - b);
+  const out = [];
+  for (const key of keys) {
+    const chunk = buckets.get(key);
+    const opens = chunk.map(p => p.open).filter(v => v !== null && v !== undefined);
+    const closes = chunk.map(p => p.close).filter(v => v !== null && v !== undefined);
+    const highs = chunk.map(p => p.high).filter(v => v !== null && v !== undefined);
+    const lows = chunk.map(p => p.low).filter(v => v !== null && v !== undefined);
+    if (closes.length === 0) continue;
+    out.push({
+      time: new Date(key).toISOString(),
+      open: opens.length ? opens[0] : closes[0],
+      close: closes[closes.length - 1],
+      high: highs.length ? Math.max(...highs) : Math.max(...closes),
+      low: lows.length ? Math.min(...lows) : Math.min(...closes),
+      sample_count: chunk.reduce((a, p) => a + (p.sample_count ?? 0), 0),
+    });
+  }
+  return out;
+}
+
+document.getElementById('fallbackToggle').addEventListener('click', () => {
+  const box = document.getElementById('fallbackBox');
+  box.style.display = box.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('loadBtn').addEventListener('click', () => run());
+document.getElementById('loadBtnTop').addEventListener('click', () => run());
+document.getElementById('itemName').addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+document.getElementById('pasteBtn').addEventListener('click', () => runFromPaste());
+document.getElementById('autoBtn').addEventListener('click', toggleAuto);
+document.getElementById('apiKey').addEventListener('change', saveApiKeyToStorage);
+document.getElementById('daysSel').addEventListener('change', () => {
+  if (autoTimer) { clearTimeout(autoTimer); scheduleAutoRefresh(); } // 기간 바꾸면 자동갱신 주기도 즉시 재조정
+  switchDays(); // 이미 받아둔 캐시가 있으면 API 호출 없이 화면만 바뀜 (없을 때만 1회 새로 받아옴)
+});
+document.getElementById('panLeftBtn').addEventListener('click', () => panZoom(-1));
+document.getElementById('panRightBtn').addEventListener('click', () => panZoom(1));
+document.getElementById('zoomBackBtn').addEventListener('click', zoomBack);
+document.getElementById('zoomResetBtn').addEventListener('click', resetZoom);
+
+// 새로고침(F5)해도 API 키·감시 목록·알림·마지막 검색 상태가 남아있도록 먼저 복원한다.
+loadStateFromStorage();
+renderWatchList();
+
+// 페이지를 열면 저장된 마지막 검색어(없으면 기본값 파동의 영혼석)를 자동 조회하고,
+// 감시 목록도 함께 최신화한다. API 키가 비어있으면 에러부터 띄우지 않고 안내만 한다.
+window.addEventListener('DOMContentLoaded', () => {
+  if (watchList.length) refreshWatchList();
+  if (document.getElementById('apiKey').value.trim()) {
+    run();
+  } else {
+    setHint('먼저 본인 API 키를 입력한 뒤 "조회"를 눌러주세요.');
+  }
+});
+
+// API는 시간을 UTC로 주는데, 마비노기 모바일은 한국 게임이라 표시는 무조건
+// 한국시간(KST, UTC+9) 기준이어야 한다. 브라우저 로컬 시간대(getMonth/getHours 등)에
+// 의존하면 해외에서 접속했을 때 엉뚱한 시간이 나오므로, UTC 시각에 9시간을 직접 더한 뒤
+// getUTC* 메서드로만 값을 읽어 항상 KST로 고정한다.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+
+function toKstDate(isoUtc) {
+  return new Date(new Date(isoUtc).getTime() + KST_OFFSET_MS);
+}
+
+// 툴팁(종가/시가표)용 — 예: 7/29(화) 22:00
+function formatLocalTime(isoUtc) {
+  if (!isoUtc) return '';
+  const d = toKstDate(isoUtc);
+  if (isNaN(d.getTime())) return isoUtc;
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WEEKDAY_KO[d.getUTCDay()]}) ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+// 차트 하단 x축 라벨용 — 날짜+시간(7/29 22:00)과 요일(화)을 두 줄로 나눠 반환
+function formatKstAxisLabel(isoUtc) {
+  const d = toKstDate(isoUtc);
+  if (isNaN(d.getTime())) return { dateTime: '', weekday: '' };
+  const pad = n => String(n).padStart(2, '0');
+  const dateTime = `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  return { dateTime, weekday: WEEKDAY_KO[d.getUTCDay()] };
+}
+
+// 요일별 특징 분석용 — 0(일)~6(토)
+function kstWeekday(isoUtc) {
+  return toKstDate(isoUtc).getUTCDay();
+}
+
+function headers() {
+  const key = document.getElementById('apiKey').value.trim();
+  return { "Authorization": "Bearer " + key, "Accept": "application/json" };
+}
+
+function setHint(msg, isError) {
+  const el = document.getElementById('statusHint');
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--down)' : 'var(--dim)';
+}
+
+async function fetchSnapshot(picked) {
+  const res = await fetch(`${BASE_URL}/market/prices?search=${encodeURIComponent(picked.name)}&limit=20`, { headers: headers() });
+  if (!res.ok) throw new Error(`시세 스냅샷 조회 실패 (HTTP ${res.status})`);
+  const data = await res.json();
+  const found = (data.data || []).find(d => d.kind_id === picked.kind_id);
+  if (!found) throw new Error('스냅샷에서 아이템을 찾지 못함');
+
+  const fmtPct = v => (v === null || v === undefined) ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+  const colorFor = v => (v === null || v === undefined) ? 'var(--text)' : (v >= 0 ? 'var(--up)' : 'var(--down)');
+
+  document.getElementById('snapRow').style.display = 'grid';
+  document.getElementById('snapNote').style.display = 'none';
+
+  document.getElementById('chartQuickStats').style.display = 'flex';
+  document.getElementById('cqsMin').textContent = found.is_sold_out ? '품절' : found.min_price.toLocaleString();
+  document.getElementById('cqsCount').textContent = found.total_count.toLocaleString() + '개';
+
+  const cc = document.getElementById('snCountChange');
+  const ccVal = found.count_change_24h;
+  const ccWord = (ccVal === null || ccVal === undefined) ? '' :
+    (ccVal <= -10 ? ' (품귀 진행 중)' : ccVal >= 10 ? ' (매물 유입 증가)' : '');
+  cc.textContent = fmtPct(ccVal) + ccWord;
+  cc.style.color = colorFor(ccVal);
+
+  const p1 = document.getElementById('snPct1h');
+  p1.textContent = fmtPct(found.pct_change_1h); p1.style.color = colorFor(found.pct_change_1h);
+  const p24 = document.getElementById('snPct24h');
+  p24.textContent = fmtPct(found.pct_change_24h); p24.style.color = colorFor(found.pct_change_24h);
+  const p7 = document.getElementById('snPct7d');
+  p7.textContent = fmtPct(found.pct_change_7d); p7.style.color = colorFor(found.pct_change_7d);
+
+  // 종합 판단에 "지금" 신호로 반영 (등록 수량 = 유동성, 24시간 변동 = 실시간 방향성, 수량 변동 = 매물 유입/품귀)
+  lastSnapshot = {
+    count: found.total_count,
+    soldOut: found.is_sold_out,
+    pct1h: found.pct_change_1h,
+    pct24h: found.pct_change_24h,
+    pct7d: found.pct_change_7d,
+    countChange24h: found.count_change_24h,
+  };
+  if (lastAnalysisCtx) renderAnalysis(lastAnalysisCtx);
+  if (!found.is_sold_out) checkPriceAlerts(picked.kind_id, found.min_price, picked.name); // 실시간 최저가 기준 — 가장 정확한 검사
+}
+
+async function fetchHistoryData(kindId, days) {
+  const histRes = await fetch(`${BASE_URL}/market/prices/history?kind_id=${kindId}&days=${days}`, { headers: headers() });
+  if (!histRes.ok) throw new Error(`시세이력 조회 실패 (HTTP ${histRes.status})`);
+  return histRes.json();
+}
+
+// 조회 버튼 클릭 / 최초 로딩 / 자동갱신 — 아이템 이름 검색부터 다시 하고, 이번 기간(days)
+// 데이터는 캐시를 무시하고 무조건 새로 받아온다(=진짜 "갱신"에 해당하는 경로).
+async function run() {
+  const name = document.getElementById('itemName').value.trim();
+  const days = document.getElementById('daysSel').value;
+  if (!name) { setHint('아이템 이름을 입력하세요.', true); return; }
+
+  setHint('검색 중...');
+  try {
+    const searchRes = await fetch(`${BASE_URL}/market/items?search=${encodeURIComponent(name)}&limit=20`, { headers: headers() });
+    if (!searchRes.ok) throw new Error(`아이템 검색 실패 (HTTP ${searchRes.status})`);
+    const searchData = await searchRes.json();
+    const list = searchData.data || [];
+    if (list.length === 0) { setHint(`'${name}' 검색 결과 없음`, true); return; }
+
+    const target = name.replace(/\s/g,'').toLowerCase();
+    let picked = list.find(i => i.name === name)
+              || list.find(i => (i.name||'').replace(/\s/g,'').toLowerCase() === target)
+              || list.find(i => (i.name||'').replace(/\s/g,'').toLowerCase().includes(target))
+              || list[0];
+
+    lastKindId = picked.kind_id;
+    lastItemName = picked.name;
+
+    setHint(`'${picked.name}' (kind_id=${picked.kind_id}) 시세이력 조회 중...`);
+
+    const histData = await fetchHistoryData(picked.kind_id, days);
+    const kindCache = historyCacheByKind[picked.kind_id] || (historyCacheByKind[picked.kind_id] = {});
+    kindCache[days] = { histData, ts: Date.now() };
+
+    render(picked, histData);
+    ensureWatchListHasItem(picked); // 조회한 아이템 하나만 갱신 (나머지 목록은 자동갱신이 켜져 있을 때만 갱신됨)
+    saveSearchStateToStorage();
+    setHint('');
+
+    // 히스토리는 전부 과거 체결 기록이라, 지금 실제로 등록되어 있는 매물 스냅샷을
+    // 별도로 한 번 더 불러온다 (등록 수량 = 팔릴 가능성을 가늠할 최소한의 근거).
+    fetchSnapshot(picked).catch((err) => {
+      document.getElementById('snapRow').style.display = 'none';
+      document.getElementById('chartQuickStats').style.display = 'none';
+      const note = document.getElementById('snapNote');
+      note.style.display = 'block';
+      note.textContent = err.message.includes('429')
+        ? '※ 실시간 스냅샷은 요청 한도 초과(429)로 못 불러왔습니다. 잠시 후 다시 조회해보세요.'
+        : '※ 실시간 스냅샷을 불러오지 못했습니다.';
+    });
+  } catch (e) {
+    if (e.message.includes('429')) {
+      setHint('요청 한도 초과(429) — 이 API 키는 분당 30회까지만 허용됩니다. 1분 정도 기다렸다가 다시 시도해주세요.', true);
+    } else {
+      setHint(e.message + ' — CORS 문제일 수 있습니다. 아래 "JSON 직접 붙여넣기"를 사용해보세요.', true);
+    }
+  }
+}
+
+// 기간(days) 드롭다운만 바꿨을 때 쓰는 경로 — 아이템 이름 재검색 없이, 이미 받아둔
+// 캐시가 있으면 API 호출 없이 화면만 바꾸고, 그 기간을 처음 보는 거라면(캐시 없음)
+// 그때만 어쩔 수 없이 히스토리 1번을 새로 받아온다. 스냅샷(실시간 매물)은 기간과 무관한
+// 값이라 여기서는 다시 불러오지 않는다.
+async function switchDays() {
+  const days = document.getElementById('daysSel').value;
+  saveSearchStateToStorage();
+  if (!lastKindId) return; // 아직 아무 것도 조회 전이면 할 게 없음 — 조회 버튼으로 먼저 불러와야 함
+
+  const picked = { kind_id: lastKindId, name: lastItemName };
+  const kindCache = historyCacheByKind[lastKindId] || (historyCacheByKind[lastKindId] = {});
+  const cached = kindCache[days];
+  if (cached) {
+    render(picked, cached.histData);
+    setHint('');
+    return;
+  }
+  setHint(`'${lastItemName}' (${days}일) 시세이력 조회 중...`);
+  try {
+    const histData = await fetchHistoryData(lastKindId, days);
+    kindCache[days] = { histData, ts: Date.now() };
+    render(picked, histData);
+    setHint('');
+  } catch (e) {
+    if (e.message.includes('429')) {
+      setHint('요청 한도 초과(429) — 이 API 키는 분당 30회까지만 허용됩니다. 1분 정도 기다렸다가 다시 시도해주세요.', true);
+    } else {
+      setHint(e.message + ' — CORS 문제일 수 있습니다. 아래 "JSON 직접 붙여넣기"를 사용해보세요.', true);
+    }
+  }
+}
+
+function runFromPaste() {
+  try {
+    const itemsRaw = document.getElementById('itemsJson').value.trim();
+    const histRaw = document.getElementById('historyJson').value.trim();
+    if (!histRaw) { setHint('시세이력 JSON을 붙여넣어주세요.', true); return; }
+
+    const histData = JSON.parse(histRaw);
+    let picked = { kind_id: histData.kind_id, name: histData.name || document.getElementById('itemName').value.trim() };
+
+    if (itemsRaw) {
+      const itemsData = JSON.parse(itemsRaw);
+      const found = (itemsData.data || []).find(i => i.kind_id === histData.kind_id);
+      if (found) picked = found;
+    }
+
+    render(picked, histData);
+    if (picked.kind_id) ensureWatchListHasItem(picked);
+    document.getElementById('snapRow').style.display = 'none';
+    document.getElementById('chartQuickStats').style.display = 'none';
+    document.getElementById('snapNote').style.display = 'none';
+    setHint('');
+  } catch (e) {
+    setHint('JSON 파싱 오류: ' + e.message, true);
+  }
+}
+
+function computeStats(points) {
+  const closes = points.map(p => p.close);
+  const min = Math.min(...points.map(p => p.low ?? p.close));
+  const max = Math.max(...points.map(p => p.high ?? p.close));
+  const avg = closes.reduce((a, b) => a + b, 0) / closes.length;
+  const cur = closes[closes.length - 1];
+  const first = closes[0];
+  const changePct = first ? ((cur - first) / first * 100) : 0;
+  const below = closes.filter(c => c <= cur).length;
+  const pct = Math.round((below / closes.length) * 100);
+  const devPct = avg ? ((cur - avg) / avg * 100) : 0;
+  return { points, closes, min, max, avg, cur, changePct, devPct, pct };
+}
+
+function render(item, histData) {
+  lastSnapshot = null; // 새 아이템/재조회 — 이전 스냅샷이 이번 데이터에 섞이지 않도록 초기화
+  const points = (histData.points || []).filter(p =>
+    (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined
+  );
+  document.getElementById('tickerId').textContent = `KIND_ID ${item.kind_id}`;
+  document.getElementById('itemTitle').textContent = item.name;
+
+  if (points.length === 0) {
+    document.getElementById('chartArea').innerHTML = '<div class="msg">시세이력 데이터가 없습니다.</div>';
+    document.getElementById('statsRow').style.display = 'none';
+    return;
+  }
+
+  const { closes, min, max, avg, cur, changePct, devPct, pct } = computeStats(points);
+
+  document.getElementById('statsRow').style.display = 'grid';
+  document.getElementById('stMin').textContent = min.toLocaleString();
+  document.getElementById('stMax').textContent = max.toLocaleString();
+  document.getElementById('stAvg').textContent = avg.toFixed(1);
+  document.getElementById('stCur').textContent = cur.toLocaleString();
+
+  const pctEl = document.getElementById('stPct');
+  pctEl.textContent = `상위 ${100 - pct}%`;
+
+  const devEl = document.getElementById('stDev');
+  devEl.textContent = `${devPct >= 0 ? '+' : ''}${devPct.toFixed(1)}%`;
+  devEl.style.color = devPct >= 0 ? 'var(--up)' : 'var(--down)';
+  checkPriceAlerts(item.kind_id, cur, item.name); // 스냅샷이 아직 안 왔거나 실패했을 때를 대비한 1차 검사(캔들 종가 기준)
+
+  // 전체 조회 기간 기준 분석 컨텍스트 — 확대(zoomRange) 안 했을 때 renderChartForSelection이 이걸 사용
+  fullAnalysisCtx = { points, closes, min, max, avg, cur, changePct, devPct, pct, resolution: histData.resolution, scopeLabel: null };
+
+  if (lastLoadedKindId !== histData.kind_id) {
+    zoomRange = null;
+    zoomStack = [];
+  }
+  lastLoadedKindId = histData.kind_id;
+  basePoints = points;
+  baseResolution = histData.resolution || 'daily';
+  baseMin = min;
+  baseMax = max;
+  setupCandleSelect();
+  renderChartForSelection();
+}
+
+function renderAnalysis({ points, closes, min, max, avg, cur, changePct, devPct, pct, resolution, scopeLabel }) {
+  const box = document.getElementById('analysisBox');
+  const list = document.getElementById('analysisList');
+  const title = document.getElementById('analysisTitle');
+  title.textContent = `📊 가격 분석${scopeLabel ? ` (${scopeLabel} 기준)` : ''}`;
+
+  // 변동성 (표준편차 기준)
+  const meanC = closes.reduce((a, b) => a + b, 0) / closes.length;
+  const variance = closes.reduce((a, b) => a + (b - meanC) ** 2, 0) / closes.length;
+  const cv = meanC ? (Math.sqrt(variance) / meanC * 100) : 0;
+
+  // 최근 절반 vs 이전 절반 모멘텀
+  let momPct = null;
+  if (closes.length >= 6) {
+    const half = Math.floor(closes.length / 2);
+    const firstHalfAvg = closes.slice(0, half).reduce((a, b) => a + b, 0) / half;
+    const secondHalfAvg = closes.slice(half).reduce((a, b) => a + b, 0) / (closes.length - half);
+    momPct = firstHalfAvg ? ((secondHalfAvg - firstHalfAvg) / firstHalfAvg * 100) : 0;
+  }
+
+  // --- 이상치 보정: 저신뢰(체결 1건) 캔들을 뺀 "정제된" 값으로 위치/괴리를 다시 계산 ---
+  // 차이가 클 때만 이 정제된 값을 화면 표시와 종합 판단에 우선 사용한다.
+  const reliablePoints = points.filter(p => (p.sample_count ?? 1) > 1);
+  let pctClean = pct, devPctClean = devPct, hasCleanedNote = false, cleanedDiffCount = 0;
+  if (reliablePoints.length >= 3 && reliablePoints.length < points.length) {
+    const cleanCloses = reliablePoints.map(p => p.close);
+    const cleanAvg = cleanCloses.reduce((a, b) => a + b, 0) / cleanCloses.length;
+    const belowClean = cleanCloses.filter(c => c <= cur).length;
+    pctClean = Math.round((belowClean / cleanCloses.length) * 100);
+    devPctClean = cleanAvg ? ((cur - cleanAvg) / cleanAvg * 100) : 0;
+    if (Math.abs(pctClean - pct) >= 10 || Math.abs(devPctClean - devPct) >= 3) {
+      hasCleanedNote = true;
+      cleanedDiffCount = points.length - reliablePoints.length;
+    }
+  }
+  const pctFinal = hasCleanedNote ? pctClean : pct;
+  const devFinal = hasCleanedNote ? devPctClean : devPct;
+
+  // --- 연속 상승/하락 스트릭 ---
+  let streak = 0, streakDir = null;
+  for (let i = points.length - 1; i > 0; i--) {
+    const diff = points[i].close - points[i - 1].close;
+    if (diff === 0) break;
+    const dir = diff > 0 ? 'up' : 'down';
+    if (streakDir === null) { streakDir = dir; streak = 1; }
+    else if (dir === streakDir) streak++;
+    else break;
+  }
+
+  // --- 실시간 스냅샷 (등록 수량 = 유동성, 24시간 변동 = 지금 이 순간 방향성) ---
+  const snap = lastSnapshot;
+  const lowLiquidity = snap && (snap.soldOut || snap.count <= 3);
+
+  // --- 종합 판단: 정제된 위치/괴리 + 모멘텀 + (있으면) 실시간 24h 변동을 투표로 합산 ---
+  // +1 = "상대적으로 싼/저평가" 신호, -1 = "상대적으로 비싼/고평가" 신호
+  let cheapVotes = 0, expensiveVotes = 0, totalVotes = 0;
+  const castVote = (v) => {
+    totalVotes++;
+    if (v > 0) cheapVotes++;
+    else if (v < 0) expensiveVotes++;
+  };
+  castVote(pctClean <= 30 ? 1 : pctClean >= 70 ? -1 : 0);
+  castVote(devPctClean <= -5 ? 1 : devPctClean >= 5 ? -1 : 0);
+  if (momPct !== null) castVote(momPct <= -3 ? 1 : momPct >= 3 ? -1 : 0);
+  if (snap && snap.pct24h !== null && snap.pct24h !== undefined) {
+    castVote(snap.pct24h <= -5 ? 1 : snap.pct24h >= 5 ? -1 : 0);
+  }
+  if (snap && snap.countChange24h !== null && snap.countChange24h !== undefined) {
+    // 매물이 늘어남(+) = 공급 증가 = 상대적으로 싼 신호, 품귀(-) = 공급 감소 = 비싼 신호
+    castVote(snap.countChange24h >= 10 ? 1 : snap.countChange24h <= -10 ? -1 : 0);
+  }
+  const net = cheapVotes - expensiveVotes;
+  const zoomTooFew = scopeLabel && points.length < 5;
+
+  let headerEmoji, headerText, headerColor;
+  if (zoomTooFew) { headerEmoji = '⚠️'; headerText = `캔들 ${points.length}개뿐 — 표본 부족`; headerColor = 'var(--down)'; }
+  else if (net >= 2) { headerEmoji = '🟢'; headerText = '확실히 저렴한 편'; headerColor = 'var(--up)'; }
+  else if (net === 1) { headerEmoji = '🟢'; headerText = '약간 저렴한 편'; headerColor = 'var(--up)'; }
+  else if (net === 0) { headerEmoji = '⚪'; headerText = '적정 가격'; headerColor = 'var(--dim)'; }
+  else if (net === -1) { headerEmoji = '🔴'; headerText = '약간 비싼 편'; headerColor = 'var(--down)'; }
+  else { headerEmoji = '🔴'; headerText = '확실히 비싼 편'; headerColor = 'var(--down)'; }
+
+  const colorVar = c => c === 'up' ? 'var(--up)' : c === 'down' ? 'var(--down)' : c === 'accent' ? 'var(--accent)' : null;
+
+  // rows: {label, value, color} 형태의 핵심 항목 + {note:true}/{warn:true}/{insight:true} 형태의 보조 문구
+  const rows = [];
+  const addRow = (label, value, color = null) => rows.push({ label, value, color });
+  const addNote = (value) => rows.push({ note: true, value });
+  const addWarn = (value) => rows.push({ warn: true, value });
+  const addInsight = (title, sentences) => rows.push({ insight: true, title, sentences });
+
+  // --- 핵심 4줄 (항상 표시) ---
+  addRow('현재 가격', `상위 ${100 - pctFinal}%`);
+  addRow('평균 대비', `${devFinal >= 0 ? '+' : ''}${devFinal.toFixed(1)}%`, devFinal >= 0 ? 'up' : 'down');
+  if (momPct !== null) {
+    addRow('최근 추세', `${momPct >= 0 ? '+' : ''}${momPct.toFixed(1)}% ${momPct >= 0 ? '↑' : '↓'}`, momPct >= 0 ? 'up' : 'down');
+  } else {
+    addRow('최근 추세', '데이터 부족');
+  }
+  const volWord = cv < 2 ? '낮음' : cv < 6 ? '보통' : '높음';
+  addRow('변동성', volWord, cv >= 10 ? 'accent' : null);
+
+  // 요일별 통계 (가격 수준·등락률·체결량 판단용) — 언제 사고 언제 팔지에 직결되는 핵심 지표라
+  // 표(빠르게 훑기)와 설명(이유)을 함께 제공한다.
+  const wdStats = {};
+  points.forEach(p => {
+    if (p.close == null || !p.time) return;
+    const wd = kstWeekday(p.time);
+    if (!wdStats[wd]) wdStats[wd] = { retSum: 0, retCnt: 0, closeSum: 0, closeCnt: 0, sample: 0 };
+    if (p.open != null && p.open) { wdStats[wd].retSum += (p.close - p.open) / p.open * 100; wdStats[wd].retCnt += 1; }
+    wdStats[wd].closeSum += p.close;
+    wdStats[wd].closeCnt += 1;
+    wdStats[wd].sample += (p.sample_count ?? 1);
+  });
+  const wdEntries = Object.keys(wdStats)
+    .map(k => ({
+      wd: Number(k), ...wdStats[k],
+      avgRet: wdStats[k].retCnt ? wdStats[k].retSum / wdStats[k].retCnt : null,
+      avgClose: wdStats[k].closeSum / wdStats[k].closeCnt,
+    }))
+    .filter(e => e.closeCnt >= 2);
+
+  let cheapDay = null, pricyDay = null, cheapDayDev = 0, pricyDayDev = 0;
+  if (wdEntries.length >= 4 && meanC) {
+    const cd = wdEntries.reduce((a, b) => (b.avgClose < a.avgClose ? b : a));
+    const pd = wdEntries.reduce((a, b) => (b.avgClose > a.avgClose ? b : a));
+    const cdDev = (cd.avgClose - meanC) / meanC * 100;
+    const pdDev = (pd.avgClose - meanC) / meanC * 100;
+    if (cd.wd !== pd.wd && Math.abs(pdDev - cdDev) >= 1) { cheapDay = cd; pricyDay = pd; cheapDayDev = cdDev; pricyDayDev = pdDev; }
+  }
+  addRow('저렴한 요일', cheapDay ? `${WEEKDAY_KO[cheapDay.wd]}요일` : '데이터 부족');
+  addRow('비싼 요일', pricyDay ? `${WEEKDAY_KO[pricyDay.wd]}요일` : '데이터 부족');
+
+  // 시간대(시 단위) 가격 수준 — 하루 안에도 데이터가 갈릴 때만 의미가 있어 4개 이상일 때만 표시
+  const hrStats = {};
+  points.forEach(p => {
+    if (p.close == null || !p.time) return;
+    const hr = toKstDate(p.time).getUTCHours();
+    if (!hrStats[hr]) hrStats[hr] = { sum: 0, cnt: 0 };
+    hrStats[hr].sum += p.close;
+    hrStats[hr].cnt += 1;
+  });
+  const hrEntries = Object.keys(hrStats)
+    .map(k => ({ hr: Number(k), ...hrStats[k], avg: hrStats[k].sum / hrStats[k].cnt }))
+    .filter(e => e.cnt >= 2);
+  let cheapHr = null, pricyHr = null;
+  if (hrEntries.length >= 4 && meanC) {
+    const ch = hrEntries.reduce((a, b) => (b.avg < a.avg ? b : a));
+    const ph = hrEntries.reduce((a, b) => (b.avg > a.avg ? b : a));
+    if (ch.hr !== ph.hr && Math.abs(((ph.avg - meanC) / meanC * 100) - ((ch.avg - meanC) / meanC * 100)) >= 1) { cheapHr = ch; pricyHr = ph; }
+  }
+  if (cheapHr) {
+    addRow('저렴한 시간대', `${cheapHr.hr}시경`);
+    addRow('비싼 시간대', `${pricyHr.hr}시경`);
+  }
+
+  // 요일별 등락률(오름세/내림세)과 체결 활발도 — 표에 별도 줄로 두지 않고 아래 설명에 녹인다
+  let bestRetDay = null, worstRetDay = null;
+  const retEntries = wdEntries.filter(e => e.avgRet !== null && e.retCnt >= 2);
+  if (retEntries.length >= 4) {
+    const best = retEntries.reduce((a, b) => (b.avgRet > a.avgRet ? b : a));
+    const worst = retEntries.reduce((a, b) => (b.avgRet < a.avgRet ? b : a));
+    if (best.wd !== worst.wd && Math.abs(best.avgRet - worst.avgRet) >= 0.5) { bestRetDay = best; worstRetDay = worst; }
+  }
+  let mostActive = null;
+  if (wdEntries.length >= 4) mostActive = wdEntries.reduce((a, b) => (b.sample > a.sample ? b : a));
+
+  // --- 요일·시간대 인사이트: 위 표의 수치를 "왜 중요한지, 언제 사고 팔면 좋은지"로 풀어서 설명 ---
+  const insightSentences = [];
+  if (cheapDay && pricyDay) {
+    insightSentences.push(`${WEEKDAY_KO[cheapDay.wd]}요일 평균가가 ${WEEKDAY_KO[pricyDay.wd]}요일보다 ${Math.abs(pricyDayDev - cheapDayDev).toFixed(1)}%p 낮아요 — 살 땐 ${WEEKDAY_KO[cheapDay.wd]}요일, 팔 땐 ${WEEKDAY_KO[pricyDay.wd]}요일을 노려보면 유리해요.`);
+  }
+  if (bestRetDay && worstRetDay) {
+    insightSentences.push(`오름세는 ${WEEKDAY_KO[bestRetDay.wd]}요일, 내림세는 ${WEEKDAY_KO[worstRetDay.wd]}요일에 두드러져요.`);
+  }
+  if (cheapHr && pricyHr) {
+    insightSentences.push(`하루 중에는 ${cheapHr.hr}시경이 가장 싸고 ${pricyHr.hr}시경이 가장 비싸요.`);
+  }
+  if (mostActive) {
+    insightSentences.push(`거래는 ${WEEKDAY_KO[mostActive.wd]}요일에 가장 활발해요 (매물 구하기 더 쉬움).`);
+  }
+  if (insightSentences.length) {
+    addInsight('💡 언제 사고 팔면 좋을까', insightSentences);
+  }
+
+  // --- 여기부터는 특이사항 있을 때만 추가되는 줄 ---
+  if (hasCleanedNote) {
+    addNote(`체결 적은 캔들 ${cleanedDiffCount}개는 빼고 계산했어요`);
+  }
+  if (streak >= 3) {
+    addRow('최근 흐름', `${streak}번 연속 ${streakDir === 'up' ? '상승' : '하락'} 중`, streakDir === 'up' ? 'up' : 'down');
+  }
+
+  if (!zoomTooFew) {
+    addNote(`저가신호 ${cheapVotes} · 고가신호 ${expensiveVotes} · 중립 ${totalVotes - cheapVotes - expensiveVotes}`);
+  } else {
+    addNote('범위를 넓히면 더 믿을 만한 판단이 나와요');
+  }
+  if (lowLiquidity) {
+    addWarn(`⚠ ${snap.soldOut ? '현재 매물 품절' : `현재 매물 ${snap.count}개뿐`} — 실제로 사기 어려울 수 있음`);
+  }
+
+  const rowsHtml = rows.map(r => {
+    if (r.note) return `<div class="analysis-row a-note"><span class="a-value">${r.value}</span></div>`;
+    if (r.warn) return `<div class="analysis-row a-warn"><span class="a-value">${r.value}</span></div>`;
+    if (r.insight) {
+      return `<div class="callout"><b style="color:var(--accent);">${r.title}</b><br>${r.sentences.join(' ')}<br><span style="color:var(--dim); font-size:12px;">표본이 적을 수 있어 참고만 하세요</span></div>`;
+    }
+    const cv2 = colorVar(r.color);
+    return `<div class="analysis-row"><span class="a-label">${r.label}</span><span class="a-value"${cv2 ? ` style="color:${cv2}"` : ''}>${r.value}</span></div>`;
+  }).join('');
+
+  list.innerHTML = `<div class="analysis-verdict" style="color:${headerColor}">${headerEmoji} ${headerText}</div>` + rowsHtml;
+  box.style.display = 'block';
+}
+
+
+function setupCandleSelect() {
+  const sel = document.getElementById('candleSel');
+  const raw = (baseResolution || '').toLowerCase();
+  let opts;
+  if (raw.includes('10min')) {
+    opts = CANDLE_GROUPS['10min'];
+  } else if (raw.includes('minute') || raw.includes('min')) {
+    opts = CANDLE_GROUPS['minute'];
+  } else if (raw.includes('hour')) {
+    opts = CANDLE_GROUPS['hourly'];
+  } else if (raw.includes('day')) {
+    opts = CANDLE_GROUPS['daily'];
+  } else {
+    // 알 수 없는 해상도 문자열 — 조용히 숨기지 않고 원본 값을 그대로 노출해서
+    // 매칭 실패 여부를 바로 알 수 있게 한다.
+    opts = [{ label: `원본 (${baseResolution || '알수없음'})`, minutes: 1 }];
+  }
+  // 사용자가 이전에 골라둔 봉 단위가 있고 새 옵션 목록에도 존재하면 그걸 유지한다
+  // (자동갱신 때마다 30분봉으로 되돌아가던 문제 수정). 처음 조회하는 경우에만 기본값(30분) 사용.
+  const DEFAULT_MINUTES = 30;
+  const hasPrevSelection = lastCandleMinutes !== null && opts.some(o => o.minutes === lastCandleMinutes);
+  const hasDefault = opts.some(o => o.minutes === DEFAULT_MINUTES);
+  const defaultMinutes = hasPrevSelection ? lastCandleMinutes : (hasDefault ? DEFAULT_MINUTES : opts[0].minutes);
+
+  sel.innerHTML = opts.map(o =>
+    `<option value="${o.minutes}"${o.minutes === defaultMinutes ? ' selected' : ''}>${o.label}</option>`
+  ).join('');
+  sel.style.display = 'inline-block';
+  lastCandleMinutes = defaultMinutes;
+  sel.onchange = () => { lastCandleMinutes = parseInt(sel.value || '1', 10); renderChartForSelection(); };
+}
+
+function renderChartForSelection() {
+  const sel = document.getElementById('candleSel');
+  const minutes = parseInt(sel.value || '1', 10);
+  let agg = aggregateCandles(basePoints, minutes);
+  let min = baseMin, max = baseMax;
+
+  if (zoomRange) {
+    const filtered = agg.filter(p => {
+      const t = new Date(p.time).getTime();
+      return t >= zoomRange.t1 && t <= zoomRange.t2;
+    });
+    if (filtered.length > 0) {
+      agg = filtered;
+      const highs = filtered.map(p => p.high ?? p.close).filter(v => v !== null && v !== undefined);
+      const lows = filtered.map(p => p.low ?? p.close).filter(v => v !== null && v !== undefined);
+      if (highs.length && lows.length) {
+        min = Math.min(...lows);
+        max = Math.max(...highs);
+      }
+    }
+    // 필터 결과가 비면(너무 좁게 드래그 등) 확대를 풀고 전체 구간으로 되돌린다
+    else {
+      zoomRange = null;
+    }
+  }
+
+  document.getElementById('zoomToolbar').style.display = zoomRange ? 'flex' : 'none';
+  document.getElementById('zoomResetBtn').style.display = zoomRange ? 'inline-block' : 'none';
+  document.getElementById('zoomBackBtn').style.display = zoomStack.length ? 'inline-block' : 'none';
+  document.getElementById('panLeftBtn').style.display = zoomRange ? 'inline-block' : 'none';
+  document.getElementById('panRightBtn').style.display = zoomRange ? 'inline-block' : 'none';
+
+  // 확대된 상태면 화면에 보이는 구간만으로 정황 분석을 다시 계산, 아니면 전체 기간 분석을 사용
+  if (zoomRange && agg.length >= 2) {
+    const zoomStats = computeStats(agg);
+    const zoomCtx = { ...zoomStats, resolution: baseResolution, scopeLabel: '지금 확대한 구간' };
+    lastAnalysisCtx = zoomCtx;
+    renderAnalysis(zoomCtx);
+  } else if (fullAnalysisCtx) {
+    lastAnalysisCtx = fullAnalysisCtx;
+    renderAnalysis(fullAnalysisCtx);
+  }
+  drawCandles(agg, min, max);
+}
+
+function drawCandles(rawPoints, min, max) {
+  // 실제 체결이 있었던 구간만 사용 (sample_count 0인 무거래 구간은 제외해 노이즈 방지)
+  const points = rawPoints.filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined);
+
+  if (points.length === 0) {
+    document.getElementById('chartArea').innerHTML = '<div class="msg">체결 데이터가 있는 구간이 없습니다.</div>';
+    return;
+  }
+
+  const W = 880, H = 520, padL = 60, padR = 60, padT = 16, padB = 48; // padB: 날짜+시간 / 요일 두 줄 라벨을 위해 확보
+  const volH = 64, volGap = 8; // 체결 건수 바 차트용 하단 공간
+  const plotW = W - padL - padR, plotH = H - padT - padB - volH - volGap;
+  const volY0 = padT + plotH + volGap; // 거래량 패널 시작 y
+  const volY1 = volY0 + volH;          // 거래량 패널 바닥 y (기준선)
+  const range = (max - min) || 1;
+  const pad = range * 0.08;
+  const yMin = min - pad, yMax = max + pad;
+
+  const n = points.length;
+
+  // 인덱스가 아니라 실제 타임스탬프 비율로 x좌표를 계산.
+  // 거래가 뜨문뜨문한 구간(예: 밤새 체결 없음)이 그대로 빈 공간으로 남아야
+  // 실제 가격 흐름과 일치하는 캔들이 그려짐 (인덱스 기반이면 먼 시간대 체결들이
+  // 다닥다닥 붙어버려서 가격이 과장되게 요동치는 것처럼 보임).
+  const times = points.map(p => new Date(p.time).getTime());
+  const tMin = times[0], tMax = times[n-1];
+  const tRange = (tMax - tMin) || 1;
+
+  // 캔들 폭은 "가장 촘촘한 간격"이 아니라 전체 개수 대비 평균 간격 기준으로 잡는다.
+  // (극단적으로 짧은 간격 하나 때문에 모든 캔들이 점처럼 눌리는 걸 방지)
+  const avgSlot = plotW / n;
+  const candleW = Math.max(2, Math.min(16, avgSlot * 0.7));
+
+  const xTime = t => padL + ((t - tMin) / tRange) * plotW;
+  const x = i => xTime(times[i]);
+  const y = v => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+  const invX = px => tMin + ((px - padL) / plotW) * tRange;
+  const invY = py => yMax - ((py - padT) / plotH) * (yMax - yMin);
+
+  currentChart = { xTime, invX, invY, y, padT, plotH, padL, plotW, W, H, points, xFn: x, candleW };
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
+
+  const steps = 8;
+  for (let s = 0; s <= steps; s++) {
+    const val = yMin + (yMax - yMin) * s / steps;
+    const yy = y(val);
+    svg += `<line class="grid-line" x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}"/>`;
+    svg += `<text class="axis-label" x="4" y="${yy+3}">${Math.round(val).toLocaleString()}</text>`;
+  }
+
+  // 라벨 위치 선정: 캔들 개수로 5~6등분하면 날짜 간격이 33시간처럼 애매하게 들쭉날쭉해서
+  // "왜 요일이 순서대로 안 나오냐"는 혼란이 생긴다. 그래서 여러 날짜에 걸친 데이터면
+  // KST 달력일 경계 기준으로 라벨을 고르고, 화면에 다 안 들어가면 "N일 간격"처럼
+  // 항상 정수 날짜 단위로 건너뛰어서 요일이 규칙적으로 이어져 보이게 한다.
+  const dayFirstIdx = [];
+  let lastDayKey = null;
+  points.forEach((p, i) => {
+    if (!p.time) return;
+    const d = toKstDate(p.time);
+    const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+    if (key !== lastDayKey) { dayFirstIdx.push(i); lastDayKey = key; }
+  });
+
+  const labelIdx = new Set();
+  if (dayFirstIdx.length > 1) {
+    const desired = Math.max(3, Math.min(8, Math.floor(plotW / 90)));
+    const step = Math.max(1, Math.ceil(dayFirstIdx.length / desired));
+    for (let k = 0; k < dayFirstIdx.length; k += step) labelIdx.add(dayFirstIdx[k]);
+    labelIdx.add(dayFirstIdx[dayFirstIdx.length - 1]); // 마지막 날짜도 항상 포함
+  } else {
+    // 하루짜리 구간(1분/1시간봉 등)은 기존처럼 캔들 개수 균등분할
+    const labelCount = Math.max(3, Math.min(6, Math.floor(plotW / 90)));
+    for (let k = 0; k < labelCount; k++) {
+      labelIdx.add(labelCount === 1 ? 0 : Math.round((n - 1) * k / (labelCount - 1)));
+    }
+  }
+  // 라벨끼리 실제 픽셀 간격이 너무 좁으면 텍스트가 겹쳐 보이므로, 최소 간격을
+  // 보장하는 후처리를 한 번 더 거친다. 뒤쪽(최신) 라벨을 우선하고, 너무 가까운
+  // 직전 라벨은 빼서 항상 읽을 수 있는 상태로만 남긴다.
+  const rawIdx = Array.from(labelIdx).sort((a, b) => a - b).filter(i => points[i]);
+  const minLabelGapPx = 64;
+  const finalIdx = [];
+  rawIdx.forEach((i, k) => {
+    if (finalIdx.length === 0) { finalIdx.push(i); return; }
+    const prev = finalIdx[finalIdx.length - 1];
+    if (x(i) - x(prev) >= minLabelGapPx) {
+      finalIdx.push(i);
+    } else if (k === rawIdx.length - 1) {
+      finalIdx[finalIdx.length - 1] = i; // 마지막 라벨은 최대한 살리고, 겹치는 직전 라벨을 대체
+    }
+  });
+  finalIdx.forEach(i => {
+    const t = points[i].time || '';
+    const { dateTime, weekday } = formatKstAxisLabel(t);
+    svg += `<text class="axis-label" x="${x(i)}" y="${H-24}" text-anchor="middle">${dateTime}</text>`;
+    svg += `<text class="axis-label axis-label-weekday" x="${x(i)}" y="${H-6}" text-anchor="middle">${weekday}</text>`;
+  });
+
+  // 종가를 잇는 얇은 라인. 캔들이 점처럼 듬성듬성해도(체결 적은 1분/5분봉 등)
+  // 이 선 하나로 전체 흐름을 한눈에 볼 수 있게 캔들보다 먼저(=아래) 그린다.
+  if (n > 1) {
+    const linePts = points.map((p, i) => `${x(i)},${y(p.close)}`).join(' ');
+    svg += `<polyline points="${linePts}" fill="none" stroke="var(--accent)" stroke-width="2.2" opacity="0.85" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+
+  let prevClose = null;
+  points.forEach((p, i) => {
+    const c = p.close;
+    const hasRange = p.open !== null && p.open !== undefined
+                  && p.high !== null && p.high !== undefined
+                  && p.low !== null && p.low !== undefined;
+    const o = hasRange ? p.open : c;
+    const h = hasRange ? p.high : c;
+    const l = hasRange ? p.low : c;
+
+    // 색상: 구간 내 실제 등락이 있으면 시가 대비, 없으면(체결 1건 등) 직전 종가 대비로 판단
+    const isUp = hasRange && o !== c ? (c >= o) : (prevClose === null ? true : c >= prevClose);
+    const cls = isUp ? 'candle-up' : 'candle-down';
+    const cx = x(i);
+
+    // 체결 1건짜리 캔들은 "시장 흐름"이 아니라 우연히 찍힌 값일 수 있어
+    // 흐리게(반투명) 그려서 신뢰도가 낮다는 걸 마우스를 안 올려도 바로 알 수 있게 한다.
+    const lowSample = (p.sample_count ?? 1) <= 1;
+    const opacity = lowSample ? 0.4 : 1;
+
+    if (h !== l) {
+      svg += `<line class="wick ${cls}" x1="${cx}" y1="${y(h)}" x2="${cx}" y2="${y(l)}" opacity="${opacity}"/>`;
+    }
+
+    const yOpen = y(o), yClose = y(c);
+    const top = Math.min(yOpen, yClose);
+    const bodyH = Math.max(1.5, Math.abs(yOpen - yClose));
+    svg += `<rect class="${cls}" x="${cx - candleW/2}" y="${top}" width="${candleW}" height="${bodyH}"
+             data-idx="${i}" style="cursor:pointer;" opacity="${opacity}"/>`;
+
+    prevClose = c;
+  });
+
+  // 체결 건수(거래량) 바 — 가격 캔들과 같은 x축을 공유하는 하단 패널.
+  // 이 구간이 실제로 활발하게 거래됐는지, 아니면 체결이 뜸했는지를 눈으로 바로 보여준다.
+  svg += `<line x1="${padL}" y1="${volY0}" x2="${W-padR}" y2="${volY0}" stroke="var(--line)" stroke-width="1" opacity="0.5"/>`;
+  svg += `<text class="axis-label" x="${padL}" y="${volY0 + 12}">체결</text>`;
+  const maxSample = Math.max(1, ...points.map(p => p.sample_count ?? 0));
+  svg += `<text class="axis-label" x="${W-padR}" y="${volY0 + 12}" text-anchor="end" opacity="0.75">최대 ${maxSample}건</text>`;
+  points.forEach((p, i) => {
+    const sc = p.sample_count ?? 0;
+    if (sc <= 0) return;
+    const cx = x(i);
+    const barH = Math.max(1, (sc / maxSample) * (volH - 14)); // 위쪽 '체결' 라벨과 안 겹치게 살짝 여백
+    const isUp = p.open !== null && p.open !== undefined && p.close >= p.open;
+    const cls = isUp ? 'candle-up' : 'candle-down';
+    const lowSample = sc <= 1;
+    svg += `<rect class="${cls}" x="${cx - candleW/2}" y="${volY1 - barH}" width="${candleW}" height="${barH}" data-idx="${i}" opacity="${lowSample ? 0.35 : 0.65}"/>`;
+  });
+
+  // 현재가(마지막 종가) 기준선 — 지금 시세가 전체 구간 어디쯤인지 한눈에 보이도록.
+  const curClose = points[points.length - 1].close;
+  const curY = y(curClose);
+  const curLabel = `${Math.round(curClose).toLocaleString()}`;
+  svg += `<line x1="${padL}" y1="${curY}" x2="${W-padR}" y2="${curY}" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="5 3" opacity="0.85"/>`;
+  // 캔들과 안 겹치게, 오른쪽 여백(padR) 안에 흰 글씨 + 배경 칩으로 표시 (칩은 숫자 길이에 맞춰 폭을 작게)
+  const chipW = Math.min(padR - 8, curLabel.length * 7 + 14);
+  svg += `<rect x="${W-8-chipW}" y="${curY-11}" width="${chipW}" height="20" rx="4" fill="var(--accent)"/>`;
+  svg += `<text x="${W-13}" y="${curY+4}" text-anchor="end" font-family="var(--mono)" font-size="12" font-weight="700" fill="#ffffff">${curLabel}</text>`;
+
+  svg += `</svg>`;
+  document.getElementById('chartArea').innerHTML = svg;
+  attachTooltip(points, x, y, candleW);
+  attachZoomDrag();
+}
+
+function getSvgPoint(svgEl, clientX, clientY) {
+  const pt = svgEl.createSVGPoint();
+  pt.x = clientX;
+  pt.y = clientY;
+  const ctm = svgEl.getScreenCTM().inverse();
+  return pt.matrixTransform(ctm);
+}
+
+function attachZoomDrag() {
+  const svgEl = document.querySelector('#chartArea svg');
+  if (!svgEl || !currentChart) return;
+  svgEl.style.cursor = 'default';
+  svgEl.style.touchAction = 'none'; // 차트 위에서 드래그하는 동안 페이지 스크롤 방지
+
+  let dragStart = null;
+  let longPressTimer = null;
+  let longPressFired = false;
+  let lastTapTime = 0;
+  let lastTapPt = null;
+  const DOUBLE_TAP_MAX_DIST = 24; // 더블탭 판정 시 두 탭 사이 최대 허용 거리(svg 좌표) — 다른 캔들을 연달아 빠르게 탭한 걸 더블탭으로 오인하지 않게 함
+
+  const clearLongPress = () => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  };
+
+  // 우클릭(PC) / "한 단계 뒤로" 버튼 공용 — 확대 한 단계 뒤로
+  const doUndo = () => {
+    if (zoomStack.length) {
+      zoomBack();
+    } else if (zoomRange) {
+      resetZoom();
+    }
+  };
+
+  // 더블클릭(PC) / 더블탭(모바일) 공용 — 확대를 완전히 초기화
+  const doFullReset = () => {
+    resetZoom();
+  };
+
+  // withLongPress: PC에서만 true로 사용. 모바일은 "캔들 탭해서 상세정보 보기"와
+  // "길게 눌러 뒤로가기"가 같은 손가락 동작이라 조금만 오래 눌려도(정밀 터치 시도 등)
+  // 의도치 않게 뒤로가기가 발동하는 문제가 있었음. 모바일은 이미 있는
+  // "한 단계 뒤로" 버튼(zoomBackBtn)으로 대체하고, 터치에서는 롱프레스 타이머를 아예 걸지 않는다.
+  const startDrag = (pt, withLongPress) => {
+    dragStart = pt;
+    longPressFired = false;
+    clearLongPress();
+    if (withLongPress) {
+      longPressTimer = setTimeout(() => {
+        longPressFired = true;
+        dragStart = null;
+        doUndo();
+      }, 550);
+    }
+  };
+
+  const moveDrag = (pt) => {
+    if (!dragStart) return;
+    // 손가락/마우스가 일정 거리 이상 움직이면 롱프레스로 취급하지 않고 일반 드래그로 진행
+    if (Math.hypot(pt.x - dragStart.x, pt.y - dragStart.y) > 6) clearLongPress();
+
+    // 확대 드래그: 세로 전체 높이를 덮는 선택 박스를 보여준다
+    let box = svgEl.querySelector('#zoomBox');
+    if (!box) {
+      box = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      box.setAttribute('id', 'zoomBox');
+      box.setAttribute('class', 'zoom-box');
+      svgEl.appendChild(box);
+    }
+    const x1 = Math.min(dragStart.x, pt.x), x2 = Math.max(dragStart.x, pt.x);
+    box.setAttribute('x', x1);
+    box.setAttribute('y', currentChart.padT);
+    box.setAttribute('width', Math.max(0, x2 - x1));
+    box.setAttribute('height', currentChart.plotH);
+  };
+
+  const endDrag = (pt, isTouch) => {
+    clearLongPress();
+    if (longPressFired) { longPressFired = false; return; } // 이미 롱프레스로 처리됨
+    if (!dragStart) return;
+    const movedEnough = Math.hypot(pt.x - dragStart.x, pt.y - dragStart.y) > 4;
+
+    if (movedEnough) {
+      const t1 = currentChart.invX(dragStart.x);
+      const t2 = currentChart.invX(pt.x);
+      zoomStack.push(zoomRange); // 되돌아갈 수 있게 이전 단계 기록 (전체 구간이었으면 null이 기록됨)
+      zoomRange = { t1: Math.min(t1, t2), t2: Math.max(t1, t2) };
+    } else if (isTouch) {
+      // 그냥 탭(드래그 아님) — 마우스 호버 대신 가장 가까운 캔들의 툴팁을 보여준다
+      const idx = findNearestIndex(pt.x);
+      dragStart = null;
+      if (idx >= 0) showTooltipForIndex(idx);
+      return;
+    }
+    dragStart = null;
+    renderChartForSelection();
+  };
+
+  // --- 마우스(PC) ---
+  svgEl.addEventListener('mousedown', (e) => { e.preventDefault(); startDrag(getSvgPoint(svgEl, e.clientX, e.clientY), true); });
+  svgEl.addEventListener('mousemove', (e) => { if (dragStart) moveDrag(getSvgPoint(svgEl, e.clientX, e.clientY)); });
+  svgEl.addEventListener('mouseup', (e) => { endDrag(getSvgPoint(svgEl, e.clientX, e.clientY), false); });
+  svgEl.addEventListener('mouseleave', () => { clearLongPress(); dragStart = null; });
+  svgEl.addEventListener('dblclick', (e) => { e.preventDefault(); doFullReset(); });
+  svgEl.addEventListener('contextmenu', (e) => { e.preventDefault(); doUndo(); });
+
+  // --- 터치(모바일) ---
+  svgEl.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    hideTooltip(); // 새 터치가 시작되면 이전 탭에서 띄운 툴팁부터 정리
+    const t = e.touches[0];
+    const pt = getSvgPoint(svgEl, t.clientX, t.clientY);
+    const now = Date.now();
+    const nearLastTap = lastTapPt && Math.hypot(pt.x - lastTapPt.x, pt.y - lastTapPt.y) <= DOUBLE_TAP_MAX_DIST;
+    if (now - lastTapTime < 300 && nearLastTap) {
+      // 같은 자리를 빠르게 두 번 탭 — 더블탭으로 보고 바로 전체 리셋
+      lastTapTime = 0;
+      lastTapPt = null;
+      doFullReset();
+      return;
+    }
+    lastTapTime = now;
+    lastTapPt = pt;
+    startDrag(pt, false); // 모바일은 롱프레스 타이머 없음 — 뒤로가기는 "한 단계 뒤로" 버튼 사용
+  }, { passive: true });
+
+  svgEl.addEventListener('touchmove', (e) => {
+    if (!dragStart || e.touches.length !== 1) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    moveDrag(getSvgPoint(svgEl, t.clientX, t.clientY));
+  }, { passive: false });
+
+  svgEl.addEventListener('touchend', (e) => {
+    const t = e.changedTouches[0];
+    if (t) endDrag(getSvgPoint(svgEl, t.clientX, t.clientY), true);
+    else { dragStart = null; clearLongPress(); }
+  });
+
+  svgEl.addEventListener('touchcancel', () => { clearLongPress(); dragStart = null; });
+}
+
+function resetZoom() {
+  if (zoomRange !== null || zoomStack.length) {
+    zoomRange = null;
+    zoomStack = [];
+    renderChartForSelection();
+  }
+}
+
+function zoomBack() {
+  if (!zoomStack.length) return;
+  zoomRange = zoomStack.pop();
+  renderChartForSelection();
+}
+
+// 확대된 구간을 유지한 채 옆 구간으로 이동. direction: -1(이전) / 1(다음)
+function panZoom(direction) {
+  if (!zoomRange || !basePoints.length) return;
+  const width = zoomRange.t2 - zoomRange.t1;
+  applyPan(zoomRange.t1 + direction * width, zoomRange.t2 + direction * width);
+}
+
+// 데이터 전체 범위를 벗어나지 않게 clamp해서 zoomRange를 옮기고 다시 그린다
+function applyPan(newT1, newT2) {
+  const dataMin = new Date(basePoints[0].time).getTime();
+  const dataMax = new Date(basePoints[basePoints.length - 1].time).getTime();
+  const width = newT2 - newT1;
+  if (newT1 < dataMin) { newT1 = dataMin; newT2 = newT1 + width; }
+  if (newT2 > dataMax) { newT2 = dataMax; newT1 = newT2 - width; }
+  zoomRange = { t1: newT1, t2: newT2 };
+  renderChartForSelection();
+}
+
+// 툴팁이 차트 박스(또는 화면) 오른쪽/아래로 넘치지 않도록 위치를 보정한다.
+// 커서 기준 오른쪽 아래에 우선 배치하고, 넘치면 반대쪽(왼쪽/위)으로 뒤집는다.
+function positionTooltip(tip, box, clientX, clientY) {
+  const rectBounds = box.getBoundingClientRect();
+  let left = clientX - rectBounds.left + 12;
+  let top = clientY - rectBounds.top - 10;
+
+  // 먼저 배치해야 실제 렌더링 크기(offsetWidth/Height)를 잴 수 있음
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+
+  const tw = tip.offsetWidth;
+  const th = tip.offsetHeight;
+  const maxLeft = box.clientWidth - tw - 4;
+  const maxTop = box.clientHeight - th - 4;
+
+  if (left > maxLeft) left = Math.max(4, clientX - rectBounds.left - tw - 12); // 오른쪽에 안 들어가면 커서 왼쪽으로
+  if (left < 4) left = 4;
+  if (top > maxTop) top = Math.max(4, maxTop);
+  if (top < 4) top = clientY - rectBounds.top + 16; // 위로 넘치면 커서 아래쪽으로
+
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+}
+
+function attachTooltip(points, xFn, yFn, candleW) {
+  const svgEl = document.querySelector('#chartArea svg');
+  const tip = document.getElementById('tooltip');
+  const box = document.querySelector('.chart-box');
+
+  svgEl.querySelectorAll('rect[data-idx]').forEach(rect => {
+    rect.addEventListener('mousemove', (e) => {
+      const idx = parseInt(rect.getAttribute('data-idx'));
+      const p = points[idx];
+      tip.style.display = 'block';
+      tip.innerHTML = `${formatLocalTime(p.time)}<br>
+        시가 ${p.open ?? '-'} · 종가 ${p.close ?? '-'}<br>
+        고가 ${p.high ?? '-'} · 저가 ${p.low ?? '-'}<br>
+        체결 ${p.sample_count ?? '-'}건`;
+      positionTooltip(tip, box, e.clientX, e.clientY);
+    });
+    rect.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  });
+}
+
+// 화면 x좌표(svg 내부 좌표)에서 가장 가까운 캔들 인덱스를 찾는다 (모바일 탭용)
+function findNearestIndex(px) {
+  if (!currentChart || !currentChart.points || !currentChart.points.length) return -1;
+  let best = 0, bestDist = Infinity;
+  for (let i = 0; i < currentChart.points.length; i++) {
+    const d = Math.abs(currentChart.xFn(i) - px);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return best;
+}
+
+// 터치로 탭했을 때 그 캔들의 툴팁을 마우스 호버와 동일한 내용으로 띄운다
+function showTooltipForIndex(idx) {
+  if (!currentChart || !currentChart.points) return;
+  const p = currentChart.points[idx];
+  const svgEl = document.querySelector('#chartArea svg');
+  const tip = document.getElementById('tooltip');
+  const box = document.querySelector('.chart-box');
+  if (!p || !svgEl || !tip || !box) return;
+
+  const svgPt = svgEl.createSVGPoint();
+  svgPt.x = currentChart.xFn(idx);
+  svgPt.y = currentChart.y(p.close);
+  const screenPt = svgPt.matrixTransform(svgEl.getScreenCTM());
+
+  tip.style.display = 'block';
+  tip.innerHTML = `${formatLocalTime(p.time)}<br>
+    시가 ${p.open ?? '-'} · 종가 ${p.close ?? '-'}<br>
+    고가 ${p.high ?? '-'} · 저가 ${p.low ?? '-'}<br>
+    체결 ${p.sample_count ?? '-'}건`;
+  positionTooltip(tip, box, screenPt.x, screenPt.y);
+}
+
+function hideTooltip() {
+  const tip = document.getElementById('tooltip');
+  if (tip) tip.style.display = 'none';
+}
+
+// 기간이 길수록(일봉) 서버 캐시도 5분 간격이라 자주 갱신할 필요가 없고,
+// 감시 목록까지 매 60초 통째로 다시 받으면 분당 요청 한도(30회)에 쉽게 걸리므로
+// 30일 이상 조회 중일 땐 자동갱신 주기를 5분으로 늘린다.
+function autoRefreshIntervalMs() {
+  const days = parseInt(document.getElementById('daysSel').value, 10);
+  return days >= 30 ? 300000 : 60000;
+}
+
+function autoRefreshLabel(ms) {
+  return ms >= 300000 ? '자동갱신 ON (5분)' : '자동갱신 ON (60초)';
+}
+
+function scheduleAutoRefresh() {
+  const ms = autoRefreshIntervalMs();
+  document.getElementById('autoBtn').textContent = autoRefreshLabel(ms);
+  autoTimer = setTimeout(() => {
+    if (lastKindId) run();
+    refreshWatchList();
+    scheduleAutoRefresh();
+  }, ms);
+}
+
+function toggleAuto() {
+  const btn = document.getElementById('autoBtn');
+  if (autoTimer) {
+    clearTimeout(autoTimer);
+    autoTimer = null;
+    btn.textContent = '자동갱신 OFF';
+  } else {
+    scheduleAutoRefresh();
+  }
+}
+
+function addPriceAlert(kindId) {
+  const priceInput = document.getElementById(`ap_price_${kindId}`);
+  const dirSel = document.getElementById(`ap_dir_${kindId}`);
+  const price = parseFloat(priceInput.value);
+  if (!price || price <= 0) { setHint('알림 가격을 올바르게 입력하세요.', true); return; }
+
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
+  if (!alertsByKind[kindId]) alertsByKind[kindId] = [];
+  alertsByKind[kindId].push({ id: alertIdSeq++, price, dir: dirSel.value, fired: false });
+  renderWatchList();
+}
+
+function removePriceAlert(kindId, id) {
+  const list = alertsByKind[kindId];
+  if (!list) return;
+  alertsByKind[kindId] = list.filter(a => a.id !== id);
+  renderWatchList();
+}
+
+function rearmPriceAlert(kindId, id) {
+  const list = alertsByKind[kindId];
+  const a = list && list.find(a => a.id === id);
+  if (a) { a.fired = false; renderWatchList(); }
+}
+
+function toggleAlertPanel(kindId) {
+  const w = watchList.find(w => w.kind_id === kindId);
+  if (!w) return;
+  w.alertPanelOpen = !w.alertPanelOpen;
+  renderWatchList();
+}
+
+// kindId에 걸린 알림들을 감시목록 행 아래에 펼쳐 보여줄 패널 HTML을 만든다.
+function renderAlertPanelHtml(kindId) {
+  const list = alertsByKind[kindId] || [];
+  const itemsHtml = list.length
+    ? list.map(a => `
+        <li class="alert-item${a.fired ? ' fired' : ''}">
+          <span class="txt">${a.price.toLocaleString()} ${a.dir === 'above' ? '이상' : '이하'}${a.fired ? '<span class="alert-hit">● 도달함</span>' : ''}${a.note ? `<span class="note">${a.note}</span>` : ''}</span>
+          ${a.fired ? `<button class="ghost" onclick="rearmPriceAlert(${kindId}, ${a.id})">다시 감시</button>` : ''}
+          <button class="ghost" onclick="removePriceAlert(${kindId}, ${a.id})">삭제</button>
+        </li>
+      `).join('')
+    : '<li class="hint" style="padding:2px 0; list-style:none;">등록된 알림이 없습니다.</li>';
+
+  return `
+    <div class="watch-alert-panel">
+      <div class="watch-alert-form">
+        <select id="ap_dir_${kindId}">
+          <option value="above">이상이면</option>
+          <option value="below">이하면</option>
+        </select>
+        <input type="number" id="ap_price_${kindId}" placeholder="가격 입력">
+        <button onclick="addPriceAlert(${kindId})">알림 추가</button>
+      </div>
+      <div class="watch-alert-subform">
+        <span>또는 평균 대비</span>
+        <input type="number" id="ap_pct_${kindId}" placeholder="-15">
+        <span>% (하락은 -, 상승은 +)</span>
+        <button class="ghost" onclick="addPercentAlert(${kindId})">% 로 계산해 추가</button>
+      </div>
+      <ul style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px;">${itemsHtml}</ul>
+    </div>`;
+}
+
+// 새 가격이 들어올 때마다(조회/자동갱신/스냅샷/감시목록) 해당 kind_id의 알림 조건을 검사한다.
+// 이미 울린 알림은 "다시 감시"를 누르기 전까지 재발동하지 않는다.
+// ── 알림 방식: 브라우저(윈도우) 알림 + 카카오톡 나에게 보내기 ──────────────
+
+function updateBrowserNotifyStatus() {
+  const el = document.getElementById('browserNotifyStatus');
+  const btn = document.getElementById('enableBrowserNotifyBtn');
+  if (!el) return;
+  if (!('Notification' in window)) {
+    el.textContent = '이 브라우저는 알림을 지원하지 않아요';
+    if (btn) btn.style.display = 'none';
+    return;
+  }
+  if (Notification.permission === 'granted') {
+    el.textContent = '✅ 켜짐';
+    if (btn) btn.style.display = 'none';
+  } else if (Notification.permission === 'denied') {
+    el.textContent = '⛔ 차단됨 (브라우저 주소창 왼쪽 자물쇠 아이콘에서 직접 허용으로 바꿔야 해요)';
+    if (btn) btn.style.display = 'none';
+  } else {
+    el.textContent = '꺼짐';
+    if (btn) btn.style.display = '';
+  }
+}
+
+function requestBrowserNotifyPermission() {
+  if (!('Notification' in window)) return;
+  Notification.requestPermission().then(updateBrowserNotifyStatus);
+}
+
+let kakaoLoggedIn = false;
+
+function updateKakaoStatus(text) {
+  const el = document.getElementById('kakaoStatus');
+  if (el) el.textContent = text;
+}
+
+function initKakao() {
+  const key = document.getElementById('kakaoJsKey').value.trim();
+  const restKey = document.getElementById('kakaoRestKey').value.trim();
+  if (!key) { updateKakaoStatus('JS 키를 입력해주세요'); return; }
+  if (!restKey) { updateKakaoStatus('REST API 키도 입력해주세요'); return; }
+  try {
+    localStorage.setItem(LS_KEYS.kakaoJsKey, key);
+    localStorage.setItem(LS_KEYS.kakaoRestKey, restKey);
+  } catch (e) {}
+  try {
+    if (window.Kakao && Kakao.isInitialized && Kakao.isInitialized()) Kakao.cleanup();
+    Kakao.init(key);
+    const ok = Kakao.isInitialized();
+    document.getElementById('kakaoLoginBtn').disabled = !ok;
+    // Kakao SDK는 로그인 성공 시 토큰을 쿠키에 저장해두고, init()할 때 자동으로 다시 불러온다.
+    // 그래서 새로고침해도 예전에 로그인했었다면 여기서 이미 토큰이 잡혀있을 수 있다.
+    const existingToken = ok && Kakao.Auth.getAccessToken && Kakao.Auth.getAccessToken();
+    if (existingToken) {
+      kakaoLoggedIn = true;
+      updateKakaoStatus('✅ 로그인됨 — 알림이 카카오톡으로도 전송됩니다');
+      document.getElementById('kakaoTestBtn').disabled = false;
+    } else {
+      updateKakaoStatus(ok ? '✅ 키 저장됨 — 로그인해주세요' : '⚠️ 초기화 실패, 키를 확인해주세요');
+    }
+  } catch (e) {
+    updateKakaoStatus('⚠️ 초기화 실패: ' + e.message);
+  }
+}
+
+// 최신 Kakao JS SDK는 팝업 로그인(Auth.login)을 지원하지 않고, 페이지 전체가 카카오로 이동했다가
+// 돌아오는 리다이렉트 방식(Auth.authorize)만 지원한다. 그래서 로그인 버튼을 누르면 이 페이지를 벗어난다.
+function kakaoLogin() {
+  if (!(window.Kakao && Kakao.isInitialized && Kakao.isInitialized())) { updateKakaoStatus('먼저 JS 키를 저장해주세요'); return; }
+  Kakao.Auth.authorize({
+    redirectUri: kakaoRedirectUri(),
+    scope: 'talk_message',
+  });
+}
+
+// 카카오 로그인 후 이 페이지로 돌아오면 주소에 ?code=... 가 붙어있다. 그 코드를 액세스 토큰으로 교환한다.
+function handleKakaoRedirectIfAny() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('code');
+  const error = params.get('error');
+  if (!code && !error) return;
+
+  // 주소창에서 code/error 파라미터를 지워 새로고침해도 재사용/재전송되지 않게 정리
+  const cleanUrl = kakaoRedirectUri();
+  history.replaceState({}, '', cleanUrl);
+
+  if (error) {
+    updateKakaoStatus('⚠️ 로그인 취소/실패: ' + (params.get('error_description') || error));
+    return;
+  }
+  const restKey = localStorage.getItem(LS_KEYS.kakaoRestKey);
+  if (!restKey) { updateKakaoStatus('⚠️ REST API 키가 없어 토큰 교환을 못 했어요. 키를 다시 저장해주세요'); return; }
+
+  updateKakaoStatus('로그인 처리 중...');
+  fetch('https://kauth.kakao.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: restKey,
+      redirect_uri: cleanUrl,
+      code: code,
+    }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (!data.access_token) throw data;
+      Kakao.Auth.setAccessToken(data.access_token);
+      kakaoLoggedIn = true;
+      updateKakaoStatus('✅ 로그인됨 — 알림이 카카오톡으로도 전송됩니다');
+      document.getElementById('kakaoTestBtn').disabled = false;
+    })
+    .catch(err => {
+      kakaoLoggedIn = false;
+      updateKakaoStatus('⚠️ 토큰 교환 실패 (Redirect URI 등록/Client Secret 설정 확인): ' + (err && err.error_description ? err.error_description : JSON.stringify(err)));
+    });
+}
+
+function kakaoSendTest() {
+  sendKakaoMemo('테스트 알림', '카카오톡 나에게 보내기가 정상 연결되었습니다 ✅');
+}
+
+// 나에게 보내기: 로그인 안 되어 있으면 조용히 무시(브라우저 알림/소리만으로도 동작해야 하므로)
+function sendKakaoMemo(title, body) {
+  const hasToken = window.Kakao && Kakao.isInitialized && Kakao.isInitialized() && Kakao.Auth.getAccessToken && Kakao.Auth.getAccessToken();
+  if (!kakaoLoggedIn && !hasToken) return;
+  try {
+    Kakao.API.request({
+      url: '/v2/api/talk/memo/default/send',
+      data: {
+        template_object: JSON.stringify({
+          object_type: 'text',
+          text: `${title}\n${body}`,
+          link: { web_url: location.href, mobile_web_url: location.href },
+        }),
+      },
+    }).catch(() => { /* 토큰 만료 등으로 실패해도 조용히 무시 — 브라우저 알림/소리는 이미 울렸음 */ });
+  } catch (e) { /* 무시 */ }
+}
+
+function checkPriceAlerts(kindId, price, itemName) {
+  const list = alertsByKind[kindId];
+  if (price === null || price === undefined || !list || !list.length) return;
+  let anyFired = false;
+  list.forEach(a => {
+    if (a.fired) return;
+    const hit = a.dir === 'above' ? price >= a.price : price <= a.price;
+    if (hit) { a.fired = true; anyFired = true; notifyPriceAlert(a, price, itemName); }
+  });
+  if (anyFired) renderWatchList(); // 감시 목록에 도달 배지/패널 반영
+}
+
+// type: 'price'(목표가 도달, 높은 톤 1회) | 'newListing'(신규 매물, 낮은 톤 2회) — 눈으로 안 봐도 구분되게
+function playAlertSound(type) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const beep = (freq, delay) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq; g.gain.value = 0.15;
+      o.start(ctx.currentTime + delay);
+      o.stop(ctx.currentTime + delay + 0.18);
+    };
+    if (type === 'newListing') { beep(520, 0); beep(520, 0.22); }
+    else { beep(880, 0); }
+    setTimeout(() => ctx.close(), 600);
+  } catch (e) { /* 오디오 재생 불가한 환경이면 조용히 무시 */ }
+}
+
+function notifyPriceAlert(alertObj, price, itemName) {
+  const dirWord = alertObj.dir === 'above' ? '이상' : '이하';
+  const noteTxt = alertObj.note ? ` (${alertObj.note})` : '';
+  const msg = `${itemName} 가격이 ${price.toLocaleString()} (설정: ${alertObj.price.toLocaleString()} ${dirWord}${noteTxt})`;
+
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try { new Notification('가격 알림 도달', { body: msg }); } catch (e) { /* 무시 */ }
+  }
+  sendKakaoMemo('💰 가격 알림 도달', msg);
+  playAlertSound('price');
+  flashTabTitle('🔔 가격 알림!');
+}
+
+// 등록 매물 수량이 늘어났을 때(=방금 누가 새로 올렸을 가능성) 울리는 알림 — 가격 알림과는
+// 다른 소리/제목으로 구분해서, 화면을 안 보고 있어도 어떤 알림인지 바로 알 수 있게 한다.
+function notifyNewListing(w, prevCount, newCount) {
+  const priceTxt = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '-');
+  const msg = `${w.name} 매물 ${prevCount.toLocaleString()} → ${newCount.toLocaleString()}개 (현재 최저가 ${priceTxt})`;
+
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try { new Notification('🆕 신규 매물 등록', { body: msg }); } catch (e) { /* 무시 */ }
+  }
+  sendKakaoMemo('🆕 신규 매물 등록', msg);
+  playAlertSound('newListing');
+  flashTabTitle('🆕 신규 매물!');
+}
+
+function flashTabTitle(label = '🔔 가격 알림!') {
+  const original = document.title;
+  let on = false, count = 0;
+  if (titleFlashTimer) clearInterval(titleFlashTimer);
+  titleFlashTimer = setInterval(() => {
+    document.title = on ? original : label;
+    on = !on;
+    if (++count > 10) { clearInterval(titleFlashTimer); titleFlashTimer = null; document.title = original; }
+  }, 700);
+}
+
+// ---- 집중 감시: 지정한 아이템 하나만 더 빠른 주기(FOCUS_INTERVAL_MS)로 갱신 ----
+// 전체 감시 목록을 다 빠르게 돌리면 분당 요청 한도를 금방 넘기므로, "지금 다투는 아이템 하나"만
+// 골라 집중적으로 갱신하는 절충안. 다른 아이템/전체 자동갱신 주기는 그대로 유지된다.
+function toggleFocusWatch(kindId) {
+  if (focusKindId === kindId) {
+    focusKindId = null;
+    stopFocusTimer();
+  } else {
+    focusKindId = kindId;
+    startFocusTimer();
+  }
+  renderWatchList();
+  saveWatchStateToStorage();
+}
+
+function startFocusTimer() {
+  stopFocusTimer();
+  const tick = async () => {
+    const w = watchList.find(x => x.kind_id === focusKindId);
+    // refreshWatchItem 안에서 스냅샷 갱신 + 차트 캐시 갱신(+지금 보고 있으면 재렌더링)까지 처리한다.
+    if (w) await refreshWatchItem(w);
+    focusTimer = setTimeout(tick, FOCUS_INTERVAL_MS);
+  };
+  tick();
+}
+
+function stopFocusTimer() {
+  if (focusTimer) { clearTimeout(focusTimer); focusTimer = null; }
+}
+
+function toggleNewListingAlert(kindId) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  w.newListingAlert = !w.newListingAlert;
+  renderWatchList();
+  saveWatchStateToStorage();
+}
+
+// 신규 매물 알림 최소 증가 수량 설정 (예: 3으로 두면 2개 늘어난 건 무시하고 3개 이상 늘 때만 알림)
+function setNewListingThreshold(kindId, val) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const n = parseInt(val, 10);
+  w.newListingThreshold = (!n || n < 1) ? 1 : n;
+  saveWatchStateToStorage();
+}
+
+// 감시 목록 아이템의 과거 시세이력 캐시에서 평균가를 구한다 — % 알림 계산용.
+// 한 번도 [조회]한 적 없는 아이템이면 캐시가 없어 null을 반환한다.
+function computeAvgForKind(kindId) {
+  const kindCache = historyCacheByKind[kindId];
+  if (!kindCache) return null;
+  const days = document.getElementById('daysSel').value;
+  const entry = kindCache[days] || Object.values(kindCache)[0];
+  if (!entry) return null;
+  const closes = (entry.histData.points || [])
+    .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined)
+    .map(p => p.close);
+  if (!closes.length) return null;
+  return closes.reduce((a, b) => a + b, 0) / closes.length;
+}
+
+// 평균 대비 -N%(급락) / +N%(급등) 알림을 절대가로 환산해서 일반 가격 알림으로 등록한다.
+// 이후 검사·표시 로직은 기존 가격 알림과 완전히 동일하게 동작한다.
+function addPercentAlert(kindId) {
+  const pctInput = document.getElementById(`ap_pct_${kindId}`);
+  const pct = parseFloat(pctInput.value);
+  if (!pct) { setHint('평균 대비 % 값을 입력하세요 (예: 하락은 -15).', true); return; }
+
+  const avg = computeAvgForKind(kindId);
+  if (avg === null) { setHint('이 아이템은 아직 시세이력을 불러온 적이 없어 평균을 계산할 수 없어요 — 먼저 [조회]로 한 번 불러와 주세요.', true); return; }
+
+  const targetPrice = Math.round(avg * (1 + pct / 100));
+  const dir = pct < 0 ? 'below' : 'above';
+
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
+  if (!alertsByKind[kindId]) alertsByKind[kindId] = [];
+  alertsByKind[kindId].push({
+    id: alertIdSeq++, price: targetPrice, dir, fired: false,
+    note: `평균 대비 ${pct >= 0 ? '+' : ''}${pct}% · 당시 평균 ${Math.round(avg).toLocaleString()}`,
+  });
+  pctInput.value = '';
+  renderWatchList();
+}
+
+// ---- 감시 목록 (여러 아이템 동시 확인) ----
+
+// 조회(run/runFromPaste)에서 이미 검색·확정된 아이템을 감시 목록에 반영한다.
+// 이미 있는 아이템이면 그 아이템 하나만 새로 갱신하고(중복 추가는 안 함), 나머지 목록은 건드리지 않는다.
+// (목록 전체를 매번 다시 받으면 여러 아이템을 연달아 눌러볼 때 요청이 과도해짐)
+function ensureWatchListHasItem(picked) {
+  const existing = watchList.find(w => w.kind_id === picked.kind_id);
+  if (existing) { refreshWatchItem(existing); return existing; }
+  const entry = { kind_id: picked.kind_id, name: picked.name, price: null, soldOut: false, count: null, newListingAlert: false, newListingThreshold: 1 };
+  watchList.push(entry);
+  renderWatchList();
+  refreshWatchItem(entry);
+  return entry;
+}
+
+function removeWatchItem(kindId) {
+  watchList = watchList.filter(w => w.kind_id !== kindId);
+  if (focusKindId === kindId) { focusKindId = null; stopFocusTimer(); }
+  renderWatchList();
+}
+
+// 감시 목록에서 아이템 이름을 클릭했을 때 — API를 새로 부르지 않고, 이미 받아둔 캐시가
+// 있으면 그걸로 화면만 바꾼다. 캐시가 없으면(한 번도 조회 안 한 아이템) 데이터를 받아오지
+// 않고 안내만 띄운다. 실제 갱신은 [조회] 버튼이나 자동갱신에서만 일어난다.
+function switchToWatchItem(kindId) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+
+  const days = document.getElementById('daysSel').value;
+  lastKindId = kindId;
+  lastItemName = w.name;
+  document.getElementById('itemName').value = w.name;
+  saveSearchStateToStorage();
+
+  // 실시간 스냅샷(등록 수량 등)은 이번에 새로 안 받아오므로, 이전 아이템 값이
+  // 그대로 남아 헷갈리지 않도록 먼저 비우고 안내 문구를 띄운다.
+  document.getElementById('snapRow').style.display = 'none';
+  document.getElementById('chartQuickStats').style.display = 'none';
+  const note = document.getElementById('snapNote');
+  note.style.display = 'block';
+  note.textContent = '※ 감시 목록 클릭으로는 데이터를 새로 안 받아와요 — 최신 정보는 [조회] 또는 자동갱신으로 받아오세요.';
+
+  const kindCache = historyCacheByKind[kindId];
+  const cached = kindCache && kindCache[days];
+  const picked = { kind_id: kindId, name: w.name };
+
+  if (cached) {
+    render(picked, cached.histData);
+  } else {
+    document.getElementById('tickerId').textContent = `KIND_ID ${kindId}`;
+    document.getElementById('itemTitle').textContent = w.name;
+    document.getElementById('chartArea').innerHTML = '<div class="msg">이 아이템은 아직 차트 데이터를 안 불러왔어요 — [조회]를 눌러주세요.</div>';
+    document.getElementById('statsRow').style.display = 'none';
+    document.getElementById('analysisBox').style.display = 'none';
+  }
+  setHint('');
+}
+
+async function refreshWatchItem(w) {
+  try {
+    const res = await fetch(`${BASE_URL}/market/prices?search=${encodeURIComponent(w.name)}&limit=20`, { headers: headers() });
+    if (!res.ok) return;
+    const data = await res.json();
+    const found = (data.data || []).find(d => d.kind_id === w.kind_id);
+    if (!found) return;
+
+    const prevCount = w.count; // 신규 매물 감지는 "직전 대비 증가"만 봐야 하므로, 갱신 전 값을 먼저 챙겨둔다
+    w.soldOut = found.is_sold_out;
+    w.price = found.is_sold_out ? null : found.min_price;
+    w.count = found.total_count;
+    w.lastUpdated = Date.now();
+    if (!found.is_sold_out) checkPriceAlerts(w.kind_id, w.price, w.name);
+
+    // prevCount가 null이면 이번이 첫 조회라는 뜻이라(증가 여부를 비교할 기준이 없음) 알림을 건너뛴다.
+    // 설정한 최소 증가 수량(newListingThreshold, 기본 1개) 이상 늘었을 때만 알림.
+    const threshold = w.newListingThreshold || 1;
+    if (w.newListingAlert && prevCount !== null && (found.total_count - prevCount) >= threshold) {
+      notifyNewListing(w, prevCount, found.total_count);
+    }
+    renderWatchList();
+
+    // 스냅샷(가격/수량)뿐 아니라 캔들 차트용 시세이력도 백그라운드로 함께 갱신해둔다.
+    // 지금 이 아이템을 보고 있지 않아도, 나중에 감시 목록에서 클릭했을 때 이미 최신 데이터가 보이도록.
+    // (감시 목록에 있다 = 최소 한 번은 조회했던 아이템이라는 뜻이라 이력 API를 불러도 낭비가 크지 않음)
+    await refreshChartCacheForItem(w.kind_id, w.name);
+  } catch (e) { /* 실패해도 조용히 유지(이전 값 표시) */ }
+}
+
+// 특정 아이템의 "현재 선택된 기간(daysSel)" 시세이력을 다시 받아 캐시에 반영한다.
+// 그 아이템이 지금 화면에 표시 중(lastKindId 일치)이면 차트도 바로 다시 그려서,
+// 자동갱신이든 집중감시든 "갱신된 순간 화면도 살아있게" 만든다.
+async function refreshChartCacheForItem(kindId, name) {
+  try {
+    const days = document.getElementById('daysSel').value;
+    const histData = await fetchHistoryData(kindId, days);
+    const kindCache = historyCacheByKind[kindId] || (historyCacheByKind[kindId] = {});
+    kindCache[days] = { histData, ts: Date.now() };
+    if (lastKindId === kindId) {
+      render({ kind_id: kindId, name }, histData);
+    }
+  } catch (e) { /* 이력 갱신 실패는 조용히 넘어가고 다음 주기에 재시도 */ }
+}
+
+function refreshWatchList() {
+  watchList.forEach(w => refreshWatchItem(w));
+}
+
+// "n초 전" / "n분 전" 형태로 변환. 아직 한 번도 갱신 안 됐으면 빈 문자열.
+function timeAgoText(ts) {
+  if (!ts) return '';
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 2) return '방금 갱신';
+  if (sec < 60) return `${sec}초 전 갱신`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}분 전 갱신`;
+  const hr = Math.floor(min / 60);
+  return `${hr}시간 전 갱신`;
+}
+
+// 데이터를 새로 받아오지 않고, 이미 표시된 "n초 전" 텍스트만 매초 갱신한다.
+// (renderWatchList 전체를 다시 그리면 열려 있는 알림 입력창의 값이 날아가므로 이 방식을 쓴다.)
+function tickWatchTimes() {
+  watchList.forEach(w => {
+    const el = document.getElementById(`wUpdated_${w.kind_id}`);
+    if (el) el.textContent = timeAgoText(w.lastUpdated);
+  });
+}
+setInterval(tickWatchTimes, 1000);
+
+function renderWatchList() {
+  const box = document.getElementById('watchList');
+  if (!box) return;
+  const countEl = document.getElementById('watchCount');
+  if (countEl) countEl.textContent = watchList.length;
+  if (!watchList.length) {
+    box.innerHTML = '';
+    saveWatchStateToStorage();
+    return;
+  }
+  box.innerHTML = watchList.map(w => {
+    const alerts = alertsByKind[w.kind_id] || [];
+    const firedCount = alerts.filter(a => a.fired).length;
+    const priceTxt = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '조회 중…');
+    const countTxt = w.count !== null ? w.count.toLocaleString() + '개' : '—';
+    const isFocus = focusKindId === w.kind_id;
+    return `
+      <div class="watch-item-wrap">
+        <div class="watch-item">
+          <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${w.name}</span>
+          <span class="w-price">${priceTxt}</span>
+          <span class="w-count">${countTxt}</span>
+          <span class="w-updated" id="wUpdated_${w.kind_id}">${timeAgoText(w.lastUpdated)}</span>
+          ${firedCount ? `<span class="alert-hit">🔔 ${firedCount}</span>` : ''}
+          <button class="ghost${isFocus ? ' toggle-on' : ''}" onclick="toggleFocusWatch(${w.kind_id})" title="집중 감시 — 이 아이템만 ${FOCUS_INTERVAL_MS / 1000}초마다 갱신">🎯${isFocus ? ' 집중감시중' : ''}</button>
+          <button class="ghost${w.newListingAlert ? ' toggle-on listing' : ''}" onclick="toggleNewListingAlert(${w.kind_id})" title="매물 수량이 늘면(=신규 등록) 알림">🆕${w.newListingAlert ? ' 감지중' : ''}</button>
+          ${w.newListingAlert ? `<input type="number" min="1" step="1" value="${w.newListingThreshold || 1}" style="width:52px;" title="최소 몇 개 이상 늘어야 알림을 울릴지" onchange="setNewListingThreshold(${w.kind_id}, this.value)"><span style="color:var(--dim); font-size:12px;">개↑</span>` : ''}
+          <button class="ghost" onclick="toggleAlertPanel(${w.kind_id})">알림${alerts.length ? ` (${alerts.length})` : ''}</button>
+          <button class="ghost" onclick="removeWatchItem(${w.kind_id})">삭제</button>
+        </div>
+        ${w.alertPanelOpen ? renderAlertPanelHtml(w.kind_id) : ''}
+      </div>`;
+  }).join('');
+  saveWatchStateToStorage();
+}
+
+</script>
+</body>
+</html>

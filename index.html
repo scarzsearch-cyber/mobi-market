@@ -331,6 +331,8 @@ let lastAnalysisCtx = null;  // renderAnalysis에 마지막으로 넘긴 값 —
 let fullAnalysisCtx = null;  // 전체 조회 기간 기준 분석 컨텍스트 (확대 안 했을 때 사용)
 
 // ---- 새로고침(F5)해도 유지: API 키 / 감시 목록 / 알림 / 마지막 검색어·기간을 localStorage에 저장 ----
+let kakaoLoggedIn = false;
+
 const LS_KEYS = {
   apiKey: 'ggMarket.apiKey',
   watchList: 'ggMarket.watchList',
@@ -1631,8 +1633,6 @@ function requestBrowserNotifyPermission() {
   if (!('Notification' in window)) return;
   Notification.requestPermission().then(updateBrowserNotifyStatus);
 }
-
-let kakaoLoggedIn = false;
 
 function updateKakaoStatus(text) {
   const el = document.getElementById('kakaoStatus');

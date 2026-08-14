@@ -234,14 +234,15 @@
           </div>
           <div class="watch-alert-subform">
             <input type="text" id="kakaoJsKey" placeholder="Kakao JavaScript 키">
+            <input type="text" id="kakaoRestKey" placeholder="Kakao REST API 키">
             <button class="ghost" id="kakaoInitBtn" onclick="initKakao()">키 저장</button>
             <button class="ghost" id="kakaoLoginBtn" onclick="kakaoLogin()" disabled>카카오 로그인</button>
             <button class="ghost" id="kakaoTestBtn" onclick="kakaoSendTest()" disabled>테스트 전송</button>
           </div>
           <div class="hint">
-            Kakao Developers(developers.kakao.com)에서 앱을 만들고 "내 애플리케이션 → 앱 키 → JavaScript 키"를 여기에 입력하세요.
-            <b>플랫폼 → Web에 사용 중인 주소를 등록</b>해야 로그인 팝업이 열립니다 (예: 파일을 로컬 서버로 열고 있다면 <code>http://localhost:포트</code>, 그냥 더블클릭해서 연 파일(<code>file://</code>)은 카카오 정책상 등록이 안 돼서 로그인이 막힐 수 있어요 — 이 경우 <code>python -m http.server</code> 같은 걸로 잠깐 로컬 서버를 띄워서 <code>http://localhost:8000</code>으로 접속해주세요).
-            "카카오 로그인" 접근권한에서 "카카오톡 메시지 전송"을 동의 항목으로 켜둬야 합니다.
+            Kakao Developers(developers.kakao.com) → 내 애플리케이션 → 앱 키에서 <b>JavaScript 키</b>와 <b>REST API 키</b>를 둘 다 여기에 입력하세요.
+            <b>플랫폼 키 → JavaScript 키 → JavaScript SDK 도메인</b>과 <b>앱 설정 → 카카오 로그인 → Redirect URI</b> 두 곳에 지금 이 페이지 주소(<code id="redirectUriHint"></code>)를 정확히 등록해야 로그인이 됩니다.
+            "카카오 로그인 → 동의항목"에서 "카카오톡 메시지 전송"을 사용 설정으로 켜둬야 합니다.
           </div>
         </div>
       </div>
@@ -338,7 +339,13 @@ const LS_KEYS = {
   days: 'ggMarket.days',
   focus: 'ggMarket.focusKindId',
   kakaoJsKey: 'ggMarket.kakaoJsKey',
+  kakaoRestKey: 'ggMarket.kakaoRestKey',
 };
+
+// 카카오 로그인은 리다이렉트 방식이라 매번 이 페이지로 돌아오므로, 쿼리스트링/해시를 뺀 순수 주소를 고정 리다이렉트 URI로 사용한다.
+function kakaoRedirectUri() {
+  return location.origin + location.pathname;
+}
 
 function saveApiKeyToStorage() {
   try { localStorage.setItem(LS_KEYS.apiKey, document.getElementById('apiKey').value.trim()); } catch (e) { /* 저장 실패해도 조용히 무시(시크릿모드 등) */ }
@@ -367,11 +374,16 @@ function loadStateFromStorage() {
     const savedKey = localStorage.getItem(LS_KEYS.apiKey);
     if (savedKey) document.getElementById('apiKey').value = savedKey;
 
+    const el = document.getElementById('redirectUriHint');
+    if (el) el.textContent = kakaoRedirectUri();
+
     const savedKakaoKey = localStorage.getItem(LS_KEYS.kakaoJsKey);
-    if (savedKakaoKey) {
-      document.getElementById('kakaoJsKey').value = savedKakaoKey;
-      if (window.Kakao) initKakao(); // 로그인은 팝업이 필요해 자동으로는 못 하고, 키 초기화까지만 미리 해둔다
-    }
+    if (savedKakaoKey) document.getElementById('kakaoJsKey').value = savedKakaoKey;
+    const savedRestKey = localStorage.getItem(LS_KEYS.kakaoRestKey);
+    if (savedRestKey) document.getElementById('kakaoRestKey').value = savedRestKey;
+    if (savedKakaoKey && window.Kakao) initKakao(); // 로그인 자체는 리다이렉트가 필요해 자동으로는 못 하고, 키 초기화까지만 미리 해둔다
+
+    handleKakaoRedirectIfAny(); // 카카오 로그인 후 이 페이지로 돌아온 상태(?code=...)면 여기서 토큰 교환까지 마무리
     updateBrowserNotifyStatus();
 
     const savedItem = localStorage.getItem(LS_KEYS.lastItem);
@@ -1629,8 +1641,13 @@ function updateKakaoStatus(text) {
 
 function initKakao() {
   const key = document.getElementById('kakaoJsKey').value.trim();
+  const restKey = document.getElementById('kakaoRestKey').value.trim();
   if (!key) { updateKakaoStatus('JS 키를 입력해주세요'); return; }
-  try { localStorage.setItem(LS_KEYS.kakaoJsKey, key); } catch (e) {}
+  if (!restKey) { updateKakaoStatus('REST API 키도 입력해주세요'); return; }
+  try {
+    localStorage.setItem(LS_KEYS.kakaoJsKey, key);
+    localStorage.setItem(LS_KEYS.kakaoRestKey, restKey);
+  } catch (e) {}
   try {
     if (window.Kakao && Kakao.isInitialized && Kakao.isInitialized()) Kakao.cleanup();
     Kakao.init(key);
@@ -1641,20 +1658,57 @@ function initKakao() {
   }
 }
 
+// 최신 Kakao JS SDK는 팝업 로그인(Auth.login)을 지원하지 않고, 페이지 전체가 카카오로 이동했다가
+// 돌아오는 리다이렉트 방식(Auth.authorize)만 지원한다. 그래서 로그인 버튼을 누르면 이 페이지를 벗어난다.
 function kakaoLogin() {
   if (!(window.Kakao && Kakao.isInitialized && Kakao.isInitialized())) { updateKakaoStatus('먼저 JS 키를 저장해주세요'); return; }
-  Kakao.Auth.login({
+  Kakao.Auth.authorize({
+    redirectUri: kakaoRedirectUri(),
     scope: 'talk_message',
-    success: () => {
+  });
+}
+
+// 카카오 로그인 후 이 페이지로 돌아오면 주소에 ?code=... 가 붙어있다. 그 코드를 액세스 토큰으로 교환한다.
+function handleKakaoRedirectIfAny() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('code');
+  const error = params.get('error');
+  if (!code && !error) return;
+
+  // 주소창에서 code/error 파라미터를 지워 새로고침해도 재사용/재전송되지 않게 정리
+  const cleanUrl = kakaoRedirectUri();
+  history.replaceState({}, '', cleanUrl);
+
+  if (error) {
+    updateKakaoStatus('⚠️ 로그인 취소/실패: ' + (params.get('error_description') || error));
+    return;
+  }
+  const restKey = localStorage.getItem(LS_KEYS.kakaoRestKey);
+  if (!restKey) { updateKakaoStatus('⚠️ REST API 키가 없어 토큰 교환을 못 했어요. 키를 다시 저장해주세요'); return; }
+
+  updateKakaoStatus('로그인 처리 중...');
+  fetch('https://kauth.kakao.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: restKey,
+      redirect_uri: cleanUrl,
+      code: code,
+    }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (!data.access_token) throw data;
+      Kakao.Auth.setAccessToken(data.access_token);
       kakaoLoggedIn = true;
       updateKakaoStatus('✅ 로그인됨 — 알림이 카카오톡으로도 전송됩니다');
       document.getElementById('kakaoTestBtn').disabled = false;
-    },
-    fail: (err) => {
+    })
+    .catch(err => {
       kakaoLoggedIn = false;
-      updateKakaoStatus('⚠️ 로그인 실패 (플랫폼 도메인 등록/카카오톡 메시지 전송 동의 확인) : ' + (err && err.error_description ? err.error_description : JSON.stringify(err)));
-    },
-  });
+      updateKakaoStatus('⚠️ 토큰 교환 실패 (Redirect URI 등록/Client Secret 설정 확인): ' + (err && err.error_description ? err.error_description : JSON.stringify(err)));
+    });
 }
 
 function kakaoSendTest() {

@@ -1739,8 +1739,19 @@ function sendKakaoMemo(title, body) {
           link: { web_url: location.href, mobile_web_url: location.href },
         }),
       },
-    }).catch(() => { /* 토큰 만료 등으로 실패해도 조용히 무시 — 브라우저 알림/소리는 이미 울렸음 */ });
-  } catch (e) { /* 무시 */ }
+    }).then(res => {
+      console.log('[Kakao 전송 성공]', res);
+      updateKakaoStatus('✅ 전송 성공! 카카오톡을 확인해보세요');
+    }).catch(err => {
+      // 디버깅용: 실패 원인을 화면과 콘솔에 그대로 노출
+      console.error('[Kakao 전송 실패]', err);
+      const detail = (err && (err.msg || err.error_description || err.error)) || JSON.stringify(err);
+      updateKakaoStatus('⚠️ 전송 실패: ' + detail);
+    });
+  } catch (e) {
+    console.error('[Kakao 전송 예외]', e);
+    updateKakaoStatus('⚠️ 전송 예외: ' + e.message);
+  }
 }
 
 function checkPriceAlerts(kindId, price, itemName) {

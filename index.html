@@ -1757,13 +1757,18 @@ function sendKakaoMemo(title, body) {
 function checkPriceAlerts(kindId, price, itemName) {
   const list = alertsByKind[kindId];
   if (price === null || price === undefined || !list || !list.length) return;
-  let anyFired = false;
+  let anyChanged = false;
   list.forEach(a => {
-    if (a.fired) return;
     const hit = a.dir === 'above' ? price >= a.price : price <= a.price;
-    if (hit) { a.fired = true; anyFired = true; notifyPriceAlert(a, price, itemName); }
+    if (hit) {
+      if (!a.fired) { a.fired = true; anyChanged = true; notifyPriceAlert(a, price, itemName); }
+      // 이미 fired 상태에서 계속 조건을 만족 중이면(같은 고점 근처에 머무는 중) 스팸 방지를 위해 재전송하지 않음
+    } else {
+      // 조건 밖으로 벗어나면 잠금 해제 — 다음에 다시 조건을 만족할 때(예: 다음 고점) 재알림
+      if (a.fired) { a.fired = false; anyChanged = true; }
+    }
   });
-  if (anyFired) renderWatchList(); // 감시 목록에 도달 배지/패널 반영
+  if (anyChanged) renderWatchList(); // 감시 목록에 도달 배지/패널 반영
 }
 
 // type: 'price'(목표가 도달, 높은 톤 1회) | 'newListing'(신규 매물, 낮은 톤 2회) — 눈으로 안 봐도 구분되게

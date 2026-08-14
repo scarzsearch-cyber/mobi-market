@@ -1733,11 +1733,11 @@ function sendKakaoMemo(title, body) {
     Kakao.API.request({
       url: '/v2/api/talk/memo/default/send',
       data: {
-        template_object: JSON.stringify({
+        template_object: {
           object_type: 'text',
           text: `${title}\n${body}`,
           link: { web_url: location.href, mobile_web_url: location.href },
-        }),
+        },
       },
     }).then(res => {
       console.log('[Kakao 전송 성공]', res);

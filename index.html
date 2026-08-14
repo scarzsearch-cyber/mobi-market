@@ -244,6 +244,19 @@
             <b>플랫폼 키 → JavaScript 키 → JavaScript SDK 도메인</b>과 <b>앱 설정 → 카카오 로그인 → Redirect URI</b> 두 곳에 지금 이 페이지 주소(<code id="redirectUriHint"></code>)를 정확히 등록해야 로그인이 됩니다.
             "카카오 로그인 → 동의항목"에서 "카카오톡 메시지 전송"을 사용 설정으로 켜둬야 합니다.
           </div>
+          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+            <span style="min-width:120px;">🌙 조용한 시간대</span>
+            <input type="checkbox" id="quietEnabled" onchange="saveQuietHours()">
+            <input type="time" id="quietStart" value="23:00" onchange="saveQuietHours()" style="width:90px;">
+            <span>~</span>
+            <input type="time" id="quietEnd" value="08:00" onchange="saveQuietHours()" style="width:90px;">
+          </div>
+          <div class="hint" style="margin:0;">이 시간대엔 카카오톡만 억제돼요 (브라우저 알림/소리는 그대로 울립니다).</div>
+          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+            <button class="ghost" id="kakaoHistoryToggleBtn" onclick="toggleKakaoHistory()">📜 알림 이력 보기</button>
+            <span class="hint" id="kakaoQuotaHint" style="margin:0;"></span>
+          </div>
+          <div id="kakaoHistoryPanel" style="display:none; max-height:220px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px;"></div>
         </div>
       </div>
     </details>
@@ -342,7 +355,20 @@ const LS_KEYS = {
   focus: 'ggMarket.focusKindId',
   kakaoJsKey: 'ggMarket.kakaoJsKey',
   kakaoRestKey: 'ggMarket.kakaoRestKey',
+  kakaoAccessExpiresAt: 'ggMarket.kakaoAccessExpiresAt',
+  kakaoRefreshToken: 'ggMarket.kakaoRefreshToken',
+  kakaoRefreshExpiresAt: 'ggMarket.kakaoRefreshExpiresAt',
+  quietEnabled: 'ggMarket.quietEnabled',
+  quietStart: 'ggMarket.quietStart',
+  quietEnd: 'ggMarket.quietEnd',
+  kakaoHistory: 'ggMarket.kakaoHistory',
+  kakaoQuotaCount: 'ggMarket.kakaoQuotaCount',
+  kakaoQuotaDate: 'ggMarket.kakaoQuotaDate',
 };
+
+// 카카오 "나에게 보내기"는 기본 앱 기준 1일 호출 횟수 제한이 있다(보통 100회).
+// 정확한 한도는 앱/계정마다 다를 수 있어 안내용 참고값으로만 쓴다.
+const KAKAO_DAILY_QUOTA_GUESS = 100;
 
 // 카카오 로그인은 리다이렉트 방식이라 매번 이 페이지로 돌아오므로, 쿼리스트링/해시를 뺀 순수 주소를 고정 리다이렉트 URI로 사용한다.
 function kakaoRedirectUri() {
@@ -387,6 +413,15 @@ function loadStateFromStorage() {
 
     handleKakaoRedirectIfAny(); // 카카오 로그인 후 이 페이지로 돌아온 상태(?code=...)면 여기서 토큰 교환까지 마무리
     updateBrowserNotifyStatus();
+
+    const savedQuietEnabled = localStorage.getItem(LS_KEYS.quietEnabled);
+    document.getElementById('quietEnabled').checked = !!savedQuietEnabled;
+    const savedQuietStart = localStorage.getItem(LS_KEYS.quietStart);
+    if (savedQuietStart) document.getElementById('quietStart').value = savedQuietStart;
+    const savedQuietEnd = localStorage.getItem(LS_KEYS.quietEnd);
+    if (savedQuietEnd) document.getElementById('quietEnd').value = savedQuietEnd;
+    renderKakaoQuotaHint();
+    renderKakaoHistory();
 
     const savedItem = localStorage.getItem(LS_KEYS.lastItem);
     if (savedItem) document.getElementById('itemName').value = savedItem;
@@ -505,7 +540,15 @@ renderWatchList();
 // 감시 목록도 함께 최신화한다. API 키가 비어있으면 에러부터 띄우지 않고 안내만 한다.
 window.addEventListener('DOMContentLoaded', () => {
   if (watchList.length) refreshWatchList();
+
+  // 카카오 알림 메시지의 "차트 보기" 버튼으로 들어온 경우(?open=kind_id) — 감시 목록에 있으면 바로 그 아이템으로 이동
+  const openParam = new URLSearchParams(location.search).get('open');
+  history.replaceState({}, '', kakaoRedirectUri()); // 주소 정리 (새로고침 시 재사용 방지)
+  const openKindId = openParam ? Number(openParam) : null;
+  const openTarget = openKindId && watchList.find(w => w.kind_id === openKindId);
+
   if (document.getElementById('apiKey').value.trim()) {
+    if (openTarget) { switchToWatchItem(openKindId); }
     run();
   } else {
     setHint('먼저 본인 API 키를 입력한 뒤 "조회"를 눌러주세요.');
@@ -1711,6 +1754,7 @@ function handleKakaoRedirectIfAny() {
     .then(data => {
       if (!data.access_token) throw data;
       Kakao.Auth.setAccessToken(data.access_token);
+      storeKakaoTokenInfo(data); // 리프레시 토큰/만료시각 저장 — 다음부턴 자동 갱신
       kakaoLoggedIn = true;
       updateKakaoStatus('✅ 로그인됨 — 알림이 카카오톡으로도 전송됩니다');
       document.getElementById('kakaoTestBtn').disabled = false;
@@ -1721,37 +1765,227 @@ function handleKakaoRedirectIfAny() {
     });
 }
 
-function kakaoSendTest() {
-  sendKakaoMemo('테스트 알림', '카카오톡 나에게 보내기가 정상 연결되었습니다 ✅');
+// access_token/refresh_token과 그 만료 시각(절대시각, ms)을 저장해둔다.
+// expires_in/refresh_token_expires_in은 "지금부터 몇 초 후 만료"라는 상대값이라, 여기서 절대시각으로 바꿔 저장한다.
+function storeKakaoTokenInfo(data) {
+  try {
+    const now = Date.now();
+    if (data.expires_in) localStorage.setItem(LS_KEYS.kakaoAccessExpiresAt, String(now + data.expires_in * 1000));
+    if (data.refresh_token) localStorage.setItem(LS_KEYS.kakaoRefreshToken, data.refresh_token);
+    if (data.refresh_token_expires_in) localStorage.setItem(LS_KEYS.kakaoRefreshExpiresAt, String(now + data.refresh_token_expires_in * 1000));
+  } catch (e) {}
 }
 
-// 나에게 보내기: 로그인 안 되어 있으면 조용히 무시(브라우저 알림/소리만으로도 동작해야 하므로)
-function sendKakaoMemo(title, body) {
+// 액세스 토큰이 곧 만료되면(5분 이내) refresh_token으로 조용히 갱신한다.
+// 갱신에 성공하면 true, 재로그인이 필요하면 false를 반환한다.
+async function refreshKakaoTokenIfNeeded() {
+  const expiresAt = Number(localStorage.getItem(LS_KEYS.kakaoAccessExpiresAt) || 0);
+  const soon = Date.now() > (expiresAt - 5 * 60 * 1000); // 만료 5분 전부터 미리 갱신
+  if (!soon) return true; // 아직 넉넉히 남았으면 그대로 사용
+
+  const refreshToken = localStorage.getItem(LS_KEYS.kakaoRefreshToken);
+  const refreshExpiresAt = Number(localStorage.getItem(LS_KEYS.kakaoRefreshExpiresAt) || 0);
+  const restKey = localStorage.getItem(LS_KEYS.kakaoRestKey);
+  if (!refreshToken || !restKey || Date.now() > refreshExpiresAt) {
+    // 리프레시 토큰도 없거나 만료됐으면 재로그인 말고는 방법이 없다.
+    return !!(window.Kakao && Kakao.Auth.getAccessToken && Kakao.Auth.getAccessToken()); // 그래도 기존 토큰이 살아있으면 일단 시도
+  }
+  try {
+    const res = await fetch('https://kauth.kakao.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: restKey,
+        refresh_token: refreshToken,
+      }),
+    });
+    const data = await res.json();
+    if (!data.access_token) throw data;
+    Kakao.Auth.setAccessToken(data.access_token);
+    storeKakaoTokenInfo(data); // refresh_token은 매번 갱신되진 않으므로, 응답에 있을 때만 storeKakaoTokenInfo 내부에서 덮어씀
+    return true;
+  } catch (e) {
+    updateKakaoStatus('⚠️ 토큰 자동 갱신 실패 — 다시 로그인해주세요');
+    return false;
+  }
+}
+
+function kakaoSendTest() {
+  // 테스트 전송은 조용한 시간대여도 바로 확인할 수 있어야 하므로 quiet 체크를 건너뛴다.
+  sendKakaoMemo('테스트 알림', '카카오톡 나에게 보내기가 정상 연결되었습니다 ✅', { skipQuiet: true, kindId: null, itemName: '(테스트)' });
+}
+
+// 지금이 "조용한 시간대" 설정 범위 안인지 확인 (KST 기준). 자정을 넘어가는 범위(예: 23:00~08:00)도 지원.
+function isQuietHours() {
+  const enabled = document.getElementById('quietEnabled');
+  if (!enabled || !enabled.checked) return false;
+  const startStr = document.getElementById('quietStart').value || '23:00';
+  const endStr = document.getElementById('quietEnd').value || '08:00';
+  const now = new Date(Date.now() + 9 * 60 * 60 * 1000); // KST
+  const cur = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const [sh, sm] = startStr.split(':').map(Number);
+  const [eh, em] = endStr.split(':').map(Number);
+  const start = sh * 60 + sm, end = eh * 60 + em;
+  if (start === end) return false;
+  if (start < end) return cur >= start && cur < end;
+  return cur >= start || cur < end; // 자정을 넘는 범위
+}
+
+function saveQuietHours() {
+  try {
+    localStorage.setItem(LS_KEYS.quietEnabled, document.getElementById('quietEnabled').checked ? '1' : '');
+    localStorage.setItem(LS_KEYS.quietStart, document.getElementById('quietStart').value);
+    localStorage.setItem(LS_KEYS.quietEnd, document.getElementById('quietEnd').value);
+  } catch (e) {}
+}
+
+// 오늘(KST) 카카오 전송 횟수를 세어 대략적인 남은 호출 가능 횟수를 보여준다. 카카오 공식 실시간 잔여량 API가
+// 따로 없어서 클라이언트에서 자체 카운트한 값이며, 참고용 추정치임을 안내에 명시한다.
+function bumpKakaoQuota() {
+  try {
+    const todayKst = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const savedDate = localStorage.getItem(LS_KEYS.kakaoQuotaDate);
+    let count = savedDate === todayKst ? Number(localStorage.getItem(LS_KEYS.kakaoQuotaCount) || 0) : 0;
+    count += 1;
+    localStorage.setItem(LS_KEYS.kakaoQuotaDate, todayKst);
+    localStorage.setItem(LS_KEYS.kakaoQuotaCount, String(count));
+    renderKakaoQuotaHint(count);
+  } catch (e) {}
+}
+
+function renderKakaoQuotaHint(count) {
+  const el = document.getElementById('kakaoQuotaHint');
+  if (!el) return;
+  const c = count !== undefined ? count : (() => {
+    const todayKst = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const savedDate = localStorage.getItem(LS_KEYS.kakaoQuotaDate);
+    return savedDate === todayKst ? Number(localStorage.getItem(LS_KEYS.kakaoQuotaCount) || 0) : 0;
+  })();
+  el.textContent = `오늘 전송 ${c}회 (기본 앱 기준 1일 약 ${KAKAO_DAILY_QUOTA_GUESS}회 제한 — 앱마다 다를 수 있는 추정치)`;
+}
+
+// 알림 이력을 localStorage에 최근 50개까지 남긴다.
+function logKakaoHistory(entry) {
+  try {
+    const list = JSON.parse(localStorage.getItem(LS_KEYS.kakaoHistory) || '[]');
+    list.unshift({ ts: Date.now(), ...entry });
+    while (list.length > 50) list.pop();
+    localStorage.setItem(LS_KEYS.kakaoHistory, JSON.stringify(list));
+    renderKakaoHistory(list);
+  } catch (e) {}
+}
+
+function renderKakaoHistory(list) {
+  const panel = document.getElementById('kakaoHistoryPanel');
+  if (!panel) return;
+  const data = list || JSON.parse(localStorage.getItem(LS_KEYS.kakaoHistory) || '[]');
+  if (!data.length) { panel.innerHTML = '<div class="hint" style="margin:0;">아직 이력이 없어요.</div>'; return; }
+  const statusLabel = { sent: '✅ 전송됨', failed: '⚠️ 실패', 'skipped-quiet': '🌙 조용한 시간대라 건너뜀' };
+  panel.innerHTML = data.map(h => {
+    const t = new Date(h.ts + 0); // ts는 로컬 절대시각(ms)이라 그대로 toLocaleString 사용
+    const timeStr = t.toLocaleString('ko-KR', { hour12: false });
+    return `<div style="padding:4px 0; border-bottom:1px dashed var(--line);">
+      <b>${statusLabel[h.status] || h.status}</b> · ${timeStr}<br>
+      ${h.itemName ? `<span style="color:var(--dim);">${h.itemName}</span> — ` : ''}${(h.text || '').replace(/</g, '&lt;')}
+      ${h.detail ? `<br><span style="color:var(--dim); font-size:11px;">${h.detail}</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function toggleKakaoHistory() {
+  const panel = document.getElementById('kakaoHistoryPanel');
+  if (!panel) return;
+  const show = panel.style.display === 'none';
+  panel.style.display = show ? 'block' : 'none';
+  if (show) renderKakaoHistory();
+}
+
+// 나에게 보내기.
+// opts: { kindId, itemName, skipQuiet, buttonTitle }
+async function sendKakaoMemo(title, body, opts) {
+  opts = opts || {};
+  const text = `${title}\n${body}`;
   const hasToken = window.Kakao && Kakao.isInitialized && Kakao.isInitialized() && Kakao.Auth.getAccessToken && Kakao.Auth.getAccessToken();
   if (!kakaoLoggedIn && !hasToken) return;
+
+  if (!opts.skipQuiet && isQuietHours()) {
+    logKakaoHistory({ status: 'skipped-quiet', itemName: opts.itemName, text });
+    return;
+  }
+
+  const tokenOk = await refreshKakaoTokenIfNeeded();
+  if (!tokenOk) {
+    logKakaoHistory({ status: 'failed', itemName: opts.itemName, text, detail: '토큰 만료 — 재로그인 필요' });
+    return;
+  }
+
+  // 클릭하면 이 알림을 유발한 아이템 차트로 바로 이동하는 딥링크 (kindId가 있을 때만)
+  const baseUrl = kakaoRedirectUri();
+  const deepLink = opts.kindId ? `${baseUrl}?open=${opts.kindId}` : baseUrl;
+
   try {
     Kakao.API.request({
       url: '/v2/api/talk/memo/default/send',
       data: {
         template_object: {
           object_type: 'text',
-          text: `${title}\n${body}`,
-          link: { web_url: location.href, mobile_web_url: location.href },
+          text,
+          link: { web_url: deepLink, mobile_web_url: deepLink },
+          button_title: opts.buttonTitle || '차트 보기',
         },
       },
     }).then(res => {
       console.log('[Kakao 전송 성공]', res);
       updateKakaoStatus('✅ 전송 성공! 카카오톡을 확인해보세요');
+      bumpKakaoQuota();
+      logKakaoHistory({ status: 'sent', itemName: opts.itemName, text });
     }).catch(err => {
-      // 디버깅용: 실패 원인을 화면과 콘솔에 그대로 노출
       console.error('[Kakao 전송 실패]', err);
       const detail = (err && (err.msg || err.error_description || err.error)) || JSON.stringify(err);
       updateKakaoStatus('⚠️ 전송 실패: ' + detail);
+      logKakaoHistory({ status: 'failed', itemName: opts.itemName, text, detail });
     });
   } catch (e) {
     console.error('[Kakao 전송 예외]', e);
     updateKakaoStatus('⚠️ 전송 예외: ' + e.message);
+    logKakaoHistory({ status: 'failed', itemName: opts.itemName, text, detail: e.message });
   }
+}
+
+// --- 배칭: 짧은 시간 안에 여러 알림이 동시에 뜨면 카톡 호출 1번으로 묶어서 보낸다(호출 횟수 절약 + 스팸 방지) ---
+let kakaoQueue = [];
+let kakaoFlushTimer = null;
+const KAKAO_BATCH_WINDOW_MS = 8000; // 이 시간 안에 들어온 알림은 하나로 묶임
+
+function queueKakaoAlert(kindId, title, body, itemName) {
+  kakaoQueue.push({ kindId, title, body, itemName });
+  if (!kakaoFlushTimer) {
+    kakaoFlushTimer = setTimeout(flushKakaoQueue, KAKAO_BATCH_WINDOW_MS);
+  }
+}
+
+function flushKakaoQueue() {
+  kakaoFlushTimer = null;
+  if (!kakaoQueue.length) return;
+  const batch = kakaoQueue;
+  kakaoQueue = [];
+
+  if (batch.length === 1) {
+    const one = batch[0];
+    sendKakaoMemo(one.title, one.body, { kindId: one.kindId, itemName: one.itemName });
+    return;
+  }
+
+  // 여러 건이면 한 메시지로 요약. 텍스트 템플릿은 200자 제한이 있어 너무 길면 일부만 보여주고 나머지는 개수로 표시.
+  const MAX_LINES = 6;
+  const lines = batch.slice(0, MAX_LINES).map(b => `• ${b.itemName}: ${b.body}`);
+  const extra = batch.length - MAX_LINES;
+  if (extra > 0) lines.push(`…외 ${extra}건 더`);
+  const title = `🔔 알림 ${batch.length}건 도달`;
+  const body = lines.join('\n');
+  // 여러 아이템이 섞여있을 때 딥링크는 첫 번째 아이템으로 이동 (가장 최근 발동 기준)
+  sendKakaoMemo(title, body, { kindId: batch[0].kindId, itemName: `${batch.length}개 아이템` });
 }
 
 function checkPriceAlerts(kindId, price, itemName) {
@@ -1761,7 +1995,7 @@ function checkPriceAlerts(kindId, price, itemName) {
   list.forEach(a => {
     const hit = a.dir === 'above' ? price >= a.price : price <= a.price;
     if (hit) {
-      if (!a.fired) { a.fired = true; anyChanged = true; notifyPriceAlert(a, price, itemName); }
+      if (!a.fired) { a.fired = true; anyChanged = true; notifyPriceAlert(a, price, itemName, kindId); }
       // 이미 fired 상태에서 계속 조건을 만족 중이면(같은 고점 근처에 머무는 중) 스팸 방지를 위해 재전송하지 않음
     } else {
       // 조건 밖으로 벗어나면 잠금 해제 — 다음에 다시 조건을 만족할 때(예: 다음 고점) 재알림
@@ -1788,7 +2022,7 @@ function playAlertSound(type) {
   } catch (e) { /* 오디오 재생 불가한 환경이면 조용히 무시 */ }
 }
 
-function notifyPriceAlert(alertObj, price, itemName) {
+function notifyPriceAlert(alertObj, price, itemName, kindId) {
   const dirWord = alertObj.dir === 'above' ? '이상' : '이하';
   const noteTxt = alertObj.note ? ` (${alertObj.note})` : '';
   const msg = `${itemName} 가격이 ${price.toLocaleString()} (설정: ${alertObj.price.toLocaleString()} ${dirWord}${noteTxt})`;
@@ -1796,7 +2030,7 @@ function notifyPriceAlert(alertObj, price, itemName) {
   if ('Notification' in window && Notification.permission === 'granted') {
     try { new Notification('가격 알림 도달', { body: msg }); } catch (e) { /* 무시 */ }
   }
-  sendKakaoMemo('💰 가격 알림 도달', msg);
+  queueKakaoAlert(kindId, '💰 가격 알림 도달', msg, itemName);
   playAlertSound('price');
   flashTabTitle('🔔 가격 알림!');
 }
@@ -1810,7 +2044,7 @@ function notifyNewListing(w, prevCount, newCount) {
   if ('Notification' in window && Notification.permission === 'granted') {
     try { new Notification('🆕 신규 매물 등록', { body: msg }); } catch (e) { /* 무시 */ }
   }
-  sendKakaoMemo('🆕 신규 매물 등록', msg);
+  queueKakaoAlert(w.kind_id, '🆕 신규 매물 등록', msg, w.name);
   playAlertSound('newListing');
   flashTabTitle('🆕 신규 매물!');
 }

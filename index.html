@@ -543,7 +543,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // 카카오 알림 메시지의 "차트 보기" 버튼으로 들어온 경우(?open=kind_id) — 감시 목록에 있으면 바로 그 아이템으로 이동
   const openParam = new URLSearchParams(location.search).get('open');
-  history.replaceState({}, '', kakaoRedirectUri()); // 주소 정리 (새로고침 시 재사용 방지)
+  try { history.replaceState({}, '', kakaoRedirectUri()); } catch (e) { /* srcdoc/샌드박스 미리보기 등에서는 replaceState가 막혀있을 수 있음 — 무시 */ } // 주소 정리 (새로고침 시 재사용 방지)
   const openKindId = openParam ? Number(openParam) : null;
   const openTarget = openKindId && watchList.find(w => w.kind_id === openKindId);
 
@@ -594,6 +594,51 @@ function headers() {
   return { "Authorization": "Bearer " + key, "Accept": "application/json" };
 }
 
+// ---- API 요청 큐 & 자체 레이트리밋 ----
+// 감시 목록이 여러 개면 refreshWatchList()가 아이템마다 동시에 2번씩(스냅샷+이력) 요청을 쏘고,
+// 여기에 집중 감시(15초)·자동조회(60초)까지 겹치면 순간적으로 요청이 몰려 서버의 "분당 30회"
+// 한도를 금방 넘긴다. 그래서 BASE_URL로 가는 모든 요청을 이 큐 하나로 모아서, 최근 60초 안의
+// 호출 수를 직접 세어가며 안전 마진(25회) 안에서만 순차적으로 내보낸다 — 즉 서버가 막기 전에
+// 우리 쪽에서 먼저 속도를 늦춰서 429 자체가 덜 뜨게 만드는 방식.
+const API_SAFE_LIMIT_PER_MIN = 25; // 서버 한도(30)보다 낮게 잡아 여유를 둠
+const API_WINDOW_MS = 60000;
+const API_CALL_GAP_MS = 150; // 연속 호출 사이 최소 간격 — 순간적으로 몰아 쏘는 것 자체를 방지
+let apiCallLog = [];
+let apiQueue = [];
+let apiQueueRunning = false;
+
+function apiFetch(url, opts) {
+  return new Promise((resolve, reject) => {
+    apiQueue.push({ url, opts, resolve, reject });
+    runApiQueue();
+  });
+}
+
+async function runApiQueue() {
+  if (apiQueueRunning) return;
+  apiQueueRunning = true;
+  while (apiQueue.length) {
+    const now = Date.now();
+    apiCallLog = apiCallLog.filter(t => now - t < API_WINDOW_MS);
+    if (apiCallLog.length >= API_SAFE_LIMIT_PER_MIN) {
+      // 한도에 다다르면 가장 오래된 호출이 60초 창 밖으로 빠질 때까지만 기다렸다가 재시도
+      const waitMs = API_WINDOW_MS - (now - apiCallLog[0]) + 50;
+      await new Promise(r => setTimeout(r, Math.max(waitMs, 200)));
+      continue;
+    }
+    const job = apiQueue.shift();
+    apiCallLog.push(Date.now());
+    try {
+      const res = await fetch(job.url, job.opts);
+      job.resolve(res);
+    } catch (e) {
+      job.reject(e);
+    }
+    if (apiQueue.length) await new Promise(r => setTimeout(r, API_CALL_GAP_MS));
+  }
+  apiQueueRunning = false;
+}
+
 function setHint(msg, isError) {
   const el = document.getElementById('statusHint');
   el.textContent = msg || '';
@@ -601,7 +646,7 @@ function setHint(msg, isError) {
 }
 
 async function fetchSnapshot(picked) {
-  const res = await fetch(`${BASE_URL}/market/prices?search=${encodeURIComponent(picked.name)}&limit=20`, { headers: headers() });
+  const res = await apiFetch(`${BASE_URL}/market/prices?search=${encodeURIComponent(picked.name)}&limit=20`, { headers: headers() });
   if (!res.ok) throw new Error(`시세 스냅샷 조회 실패 (HTTP ${res.status})`);
   const data = await res.json();
   const found = (data.data || []).find(d => d.kind_id === picked.kind_id);
@@ -645,7 +690,7 @@ async function fetchSnapshot(picked) {
 }
 
 async function fetchHistoryData(kindId, days) {
-  const histRes = await fetch(`${BASE_URL}/market/prices/history?kind_id=${kindId}&days=${days}`, { headers: headers() });
+  const histRes = await apiFetch(`${BASE_URL}/market/prices/history?kind_id=${kindId}&days=${days}`, { headers: headers() });
   if (!histRes.ok) throw new Error(`시세이력 조회 실패 (HTTP ${histRes.status})`);
   return histRes.json();
 }
@@ -659,7 +704,7 @@ async function run() {
 
   setHint('검색 중...');
   try {
-    const searchRes = await fetch(`${BASE_URL}/market/items?search=${encodeURIComponent(name)}&limit=20`, { headers: headers() });
+    const searchRes = await apiFetch(`${BASE_URL}/market/items?search=${encodeURIComponent(name)}&limit=20`, { headers: headers() });
     if (!searchRes.ok) throw new Error(`아이템 검색 실패 (HTTP ${searchRes.status})`);
     const searchData = await searchRes.json();
     const list = searchData.data || [];
@@ -1584,14 +1629,22 @@ function addPriceAlert(kindId) {
   const dirSel = document.getElementById(`ap_dir_${kindId}`);
   const price = parseFloat(priceInput.value);
   if (!price || price <= 0) { setHint('알림 가격을 올바르게 입력하세요.', true); return; }
+  const marginPct = readMarginPct(kindId);
 
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
 
   if (!alertsByKind[kindId]) alertsByKind[kindId] = [];
-  alertsByKind[kindId].push({ id: alertIdSeq++, price, dir: dirSel.value, fired: false });
+  alertsByKind[kindId].push({ id: alertIdSeq++, type: 'threshold', price, dir: dirSel.value, marginPct, fired: false });
   renderWatchList();
+}
+
+// 알림 패널의 공용 "재발동 여유폭(%)" 입력값을 읽어온다. 비워두면 0(=기존처럼 경계선에서 바로 재발동).
+function readMarginPct(kindId) {
+  const el = document.getElementById(`ap_margin_${kindId}`);
+  const v = el ? parseFloat(el.value) : 0;
+  return (!v || v < 0) ? 0 : v;
 }
 
 function removePriceAlert(kindId, id) {
@@ -1618,13 +1671,18 @@ function toggleAlertPanel(kindId) {
 function renderAlertPanelHtml(kindId) {
   const list = alertsByKind[kindId] || [];
   const itemsHtml = list.length
-    ? list.map(a => `
+    ? list.map(a => {
+        const kindLabel = a.type === 'trailing'
+          ? `고점 대비 ${a.pct}% 하락${a.peakPrice ? ` · 현재 고점 ${Math.round(a.peakPrice).toLocaleString()}` : ''}`
+          : `${a.price.toLocaleString()} ${a.dir === 'above' ? '이상' : '이하'}`;
+        return `
         <li class="alert-item${a.fired ? ' fired' : ''}">
-          <span class="txt">${a.price.toLocaleString()} ${a.dir === 'above' ? '이상' : '이하'}${a.fired ? '<span class="alert-hit">● 도달함</span>' : ''}${a.note ? `<span class="note">${a.note}</span>` : ''}</span>
-          ${a.fired ? `<button class="ghost" onclick="rearmPriceAlert(${kindId}, ${a.id})">다시 감시</button>` : ''}
+          <span class="txt">${kindLabel}${a.fired ? '<span class="alert-hit">● 도달함</span>' : ''}${a.note ? `<span class="note">${a.note}</span>` : ''}</span>
+          ${a.fired && a.type !== 'trailing' ? `<button class="ghost" onclick="rearmPriceAlert(${kindId}, ${a.id})">다시 감시</button>` : ''}
           <button class="ghost" onclick="removePriceAlert(${kindId}, ${a.id})">삭제</button>
         </li>
-      `).join('')
+      `;
+      }).join('')
     : '<li class="hint" style="padding:2px 0; list-style:none;">등록된 알림이 없습니다.</li>';
 
   return `
@@ -1642,6 +1700,17 @@ function renderAlertPanelHtml(kindId) {
         <input type="number" id="ap_pct_${kindId}" placeholder="-15">
         <span>% (하락은 -, 상승은 +)</span>
         <button class="ghost" onclick="addPercentAlert(${kindId})">% 로 계산해 추가</button>
+      </div>
+      <div class="watch-alert-subform">
+        <span>또는 고점 대비</span>
+        <input type="number" id="ap_trail_pct_${kindId}" placeholder="10" min="0.1" step="0.1">
+        <span>% 하락하면 (매번 새 고점마다 재발동)</span>
+        <button class="ghost" onclick="addTrailingAlert(${kindId})">트레일링 추가</button>
+      </div>
+      <div class="watch-alert-subform">
+        <span>재발동 여유폭 ±</span>
+        <input type="number" id="ap_margin_${kindId}" placeholder="0" min="0" step="0.1" style="width:60px;">
+        <span>% (경계선 근처에서 알림이 반복되는 게 싫으면 설정 — 위 두 알림에 적용)</span>
       </div>
       <ul style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px;">${itemsHtml}</ul>
     </div>`;
@@ -1730,7 +1799,7 @@ function handleKakaoRedirectIfAny() {
 
   // 주소창에서 code/error 파라미터를 지워 새로고침해도 재사용/재전송되지 않게 정리
   const cleanUrl = kakaoRedirectUri();
-  history.replaceState({}, '', cleanUrl);
+  try { history.replaceState({}, '', cleanUrl); } catch (e) { /* srcdoc/샌드박스 미리보기 등에서는 replaceState가 막혀있을 수 있음 — 무시 */ }
 
   if (error) {
     updateKakaoStatus('⚠️ 로그인 취소/실패: ' + (params.get('error_description') || error));
@@ -1993,13 +2062,34 @@ function checkPriceAlerts(kindId, price, itemName) {
   if (price === null || price === undefined || !list || !list.length) return;
   let anyChanged = false;
   list.forEach(a => {
+    if (a.type === 'trailing') {
+      // 새 고점을 찍으면 기준점을 올리고 재무장 — "고점마다 알림"을 반복적으로 받을 수 있게 함
+      if (a.peakPrice === undefined || a.peakPrice === null || price > a.peakPrice) {
+        a.peakPrice = price;
+        if (a.fired) { a.fired = false; anyChanged = true; }
+        return;
+      }
+      const dropPct = ((a.peakPrice - price) / a.peakPrice) * 100;
+      if (dropPct >= a.pct && !a.fired) {
+        a.fired = true; anyChanged = true;
+        notifyPriceAlert(a, price, itemName, kindId, `고점 ${Math.round(a.peakPrice).toLocaleString()} 대비 -${dropPct.toFixed(1)}%`);
+      }
+      return;
+    }
+
+    // type === 'threshold' (직접 가격 입력 / 평균 대비 % 로 계산된 알림 — 로직은 동일)
+    const marginFrac = (a.marginPct || 0) / 100;
     const hit = a.dir === 'above' ? price >= a.price : price <= a.price;
     if (hit) {
       if (!a.fired) { a.fired = true; anyChanged = true; notifyPriceAlert(a, price, itemName, kindId); }
       // 이미 fired 상태에서 계속 조건을 만족 중이면(같은 고점 근처에 머무는 중) 스팸 방지를 위해 재전송하지 않음
     } else {
-      // 조건 밖으로 벗어나면 잠금 해제 — 다음에 다시 조건을 만족할 때(예: 다음 고점) 재알림
-      if (a.fired) { a.fired = false; anyChanged = true; }
+      // 여유폭이 없으면(기본값) 조건을 벗어나는 즉시 재무장. 여유폭을 설정했다면 그만큼 더
+      // 확실히 벗어나야만(경계선 근처 미세한 오르내림 무시) 재무장 — 알림 스팸 방지.
+      const released = a.dir === 'above'
+        ? price <= a.price * (1 - marginFrac)
+        : price >= a.price * (1 + marginFrac);
+      if (a.fired && released) { a.fired = false; anyChanged = true; }
     }
   });
   if (anyChanged) renderWatchList(); // 감시 목록에 도달 배지/패널 반영
@@ -2022,15 +2112,19 @@ function playAlertSound(type) {
   } catch (e) { /* 오디오 재생 불가한 환경이면 조용히 무시 */ }
 }
 
-function notifyPriceAlert(alertObj, price, itemName, kindId) {
-  const dirWord = alertObj.dir === 'above' ? '이상' : '이하';
-  const noteTxt = alertObj.note ? ` (${alertObj.note})` : '';
-  const msg = `${itemName} 가격이 ${price.toLocaleString()} (설정: ${alertObj.price.toLocaleString()} ${dirWord}${noteTxt})`;
+function notifyPriceAlert(alertObj, price, itemName, kindId, overrideMsg) {
+  const msg = overrideMsg
+    ? `${itemName} 가격이 ${price.toLocaleString()} (${overrideMsg})`
+    : (() => {
+        const dirWord = alertObj.dir === 'above' ? '이상' : '이하';
+        const noteTxt = alertObj.note ? ` (${alertObj.note})` : '';
+        return `${itemName} 가격이 ${price.toLocaleString()} (설정: ${alertObj.price.toLocaleString()} ${dirWord}${noteTxt})`;
+      })();
 
   if ('Notification' in window && Notification.permission === 'granted') {
     try { new Notification('가격 알림 도달', { body: msg }); } catch (e) { /* 무시 */ }
   }
-  queueKakaoAlert(kindId, '💰 가격 알림 도달', msg, itemName);
+  queueKakaoAlert(kindId, overrideMsg ? '📉 트레일링 알림 도달' : '💰 가격 알림 도달', msg, itemName);
   playAlertSound('price');
   flashTabTitle('🔔 가격 알림!');
 }
@@ -2134,6 +2228,7 @@ function addPercentAlert(kindId) {
 
   const targetPrice = Math.round(avg * (1 + pct / 100));
   const dir = pct < 0 ? 'below' : 'above';
+  const marginPct = readMarginPct(kindId);
 
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
@@ -2141,8 +2236,33 @@ function addPercentAlert(kindId) {
 
   if (!alertsByKind[kindId]) alertsByKind[kindId] = [];
   alertsByKind[kindId].push({
-    id: alertIdSeq++, price: targetPrice, dir, fired: false,
+    id: alertIdSeq++, type: 'threshold', price: targetPrice, dir, marginPct, fired: false,
     note: `평균 대비 ${pct >= 0 ? '+' : ''}${pct}% · 당시 평균 ${Math.round(avg).toLocaleString()}`,
+  });
+  pctInput.value = '';
+  renderWatchList();
+}
+
+// 트레일링(추격) 알림: 절대가가 아니라 "여기까지 찍은 최고가" 대비 하락률을 기준으로 삼는다.
+// 가격이 새 고점을 찍을 때마다 기준점(peakPrice)이 자동으로 올라가고 동시에 재무장되므로,
+// "고점마다 팔고 싶다"처럼 반복적으로 알림을 받고 싶을 때 가격 알림보다 훨씬 잘 맞는다.
+function addTrailingAlert(kindId) {
+  const pctInput = document.getElementById(`ap_trail_pct_${kindId}`);
+  const pct = parseFloat(pctInput.value);
+  if (!pct || pct <= 0) { setHint('고점 대비 하락률(%)을 0보다 크게 입력하세요.', true); return; }
+
+  const w = watchList.find(x => x.kind_id === kindId);
+  const startPrice = (w && !w.soldOut && w.price) ? w.price : computeAvgForKind(kindId);
+  if (!startPrice) { setHint('현재가를 아직 몰라서 트레일링 기준점을 잡을 수 없어요 — 감시 목록이 최소 한 번 갱신된 뒤에 추가해주세요.', true); return; }
+
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
+  if (!alertsByKind[kindId]) alertsByKind[kindId] = [];
+  alertsByKind[kindId].push({
+    id: alertIdSeq++, type: 'trailing', pct, peakPrice: startPrice, fired: false,
+    note: `등록 시점 기준가 ${Math.round(startPrice).toLocaleString()}`,
   });
   pctInput.value = '';
   renderWatchList();
@@ -2182,33 +2302,44 @@ function switchToWatchItem(kindId) {
   document.getElementById('itemName').value = w.name;
   saveSearchStateToStorage();
 
-  // 실시간 스냅샷(등록 수량 등)은 이번에 새로 안 받아오므로, 이전 아이템 값이
-  // 그대로 남아 헷갈리지 않도록 먼저 비우고 안내 문구를 띄운다.
+  // 실시간 스냅샷(등록 수량 등)은 아래에서 자동으로 다시 받아올 거라, 그동안은 이전 아이템
+  // 값이 그대로 남아 헷갈리지 않도록 먼저 비우고 "불러오는 중" 안내만 잠깐 띄운다.
   document.getElementById('snapRow').style.display = 'none';
   document.getElementById('chartQuickStats').style.display = 'none';
   const note = document.getElementById('snapNote');
   note.style.display = 'block';
-  note.textContent = '※ 감시 목록 클릭으로는 데이터를 새로 안 받아와요 — 최신 정보는 [조회] 또는 자동갱신으로 받아오세요.';
+  note.textContent = '※ 최신 데이터 불러오는 중...';
 
   const kindCache = historyCacheByKind[kindId];
   const cached = kindCache && kindCache[days];
   const picked = { kind_id: kindId, name: w.name };
 
   if (cached) {
-    render(picked, cached.histData);
+    render(picked, cached.histData); // 일단 캐시로 즉시 보여주고, 아래에서 최신 데이터로 조용히 갱신
   } else {
     document.getElementById('tickerId').textContent = `KIND_ID ${kindId}`;
     document.getElementById('itemTitle').textContent = w.name;
-    document.getElementById('chartArea').innerHTML = '<div class="msg">이 아이템은 아직 차트 데이터를 안 불러왔어요 — [조회]를 눌러주세요.</div>';
+    document.getElementById('chartArea').innerHTML = '<div class="msg">최신 차트 데이터를 불러오는 중...</div>';
     document.getElementById('statsRow').style.display = 'none';
     document.getElementById('analysisBox').style.display = 'none';
   }
   setHint('');
+
+  // 감시 목록 클릭 = "이 아이템을 보고 싶다"는 명확한 의사표시이므로, 조회 버튼을 따로 안 눌러도
+  // 그래프와 스냅샷(등록 수량/변동률)을 자동으로 최신화한다. 요청은 apiFetch 큐를 거치므로
+  // 다른 백그라운드 갱신과 겹쳐도 안전하게 순서대로 처리된다.
+  refreshChartCacheForItem(kindId, w.name);
+  fetchSnapshot(picked).catch((err) => {
+    note.style.display = 'block';
+    note.textContent = err.message.includes('429')
+      ? '※ 요청 한도 초과(429)로 최신 스냅샷을 못 불러왔습니다. 잠시 후 자동으로 다시 시도됩니다.'
+      : '※ 최신 스냅샷을 불러오지 못했습니다.';
+  });
 }
 
 async function refreshWatchItem(w) {
   try {
-    const res = await fetch(`${BASE_URL}/market/prices?search=${encodeURIComponent(w.name)}&limit=20`, { headers: headers() });
+    const res = await apiFetch(`${BASE_URL}/market/prices?search=${encodeURIComponent(w.name)}&limit=20`, { headers: headers() });
     if (!res.ok) return;
     const data = await res.json();
     const found = (data.data || []).find(d => d.kind_id === w.kind_id);
@@ -2229,10 +2360,17 @@ async function refreshWatchItem(w) {
     }
     renderWatchList();
 
-    // 스냅샷(가격/수량)뿐 아니라 캔들 차트용 시세이력도 백그라운드로 함께 갱신해둔다.
-    // 지금 이 아이템을 보고 있지 않아도, 나중에 감시 목록에서 클릭했을 때 이미 최신 데이터가 보이도록.
-    // (감시 목록에 있다 = 최소 한 번은 조회했던 아이템이라는 뜻이라 이력 API를 불러도 낭비가 크지 않음)
-    await refreshChartCacheForItem(w.kind_id, w.name);
+    // 스냅샷(가격/수량)뿐 아니라 캔들 차트용 시세이력도 백그라운드로 함께 갱신해두면 좋지만,
+    // 감시 아이템마다 매번 이 두 번째 요청까지 쏘면 호출량이 배로 늘어 429의 주된 원인이 된다.
+    // 그래서 "지금 화면에 보이는 아이템"이거나 "집중 감시 중인 아이템"일 때만 매번 갱신하고,
+    // 나머지 백그라운드 아이템은 캐시가 5분 이상 오래됐을 때만 갱신한다.
+    const daysNow = document.getElementById('daysSel').value;
+    const cacheNow = (historyCacheByKind[w.kind_id] || {})[daysNow];
+    const isVisibleOrFocused = (w.kind_id === lastKindId) || (w.kind_id === focusKindId);
+    const staleCache = !cacheNow || (Date.now() - cacheNow.ts) > 5 * 60 * 1000;
+    if (isVisibleOrFocused || staleCache) {
+      await refreshChartCacheForItem(w.kind_id, w.name);
+    }
   } catch (e) { /* 실패해도 조용히 유지(이전 값 표시) */ }
 }
 

@@ -58,6 +58,7 @@
   button:hover{filter:brightness(1.08);}
   button:active{filter:brightness(0.95);}
   button.ghost{background:transparent; color:var(--dim); border:1px solid var(--line); font-weight:500;}
+  button.key-eye{padding:4px 8px; font-size:14px; line-height:1;}
 
   .stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(110px,1fr)); gap:1px; background:var(--line); border-radius:8px; overflow:hidden; margin-bottom:8px;}
   .stat{background:var(--panel); padding:12px 14px;}
@@ -176,7 +177,8 @@
       <div style="width:100%;">
         <div class="ticker-row">
           <span class="ticker" id="tickerId">KIND_ID —</span>
-          <input type="text" id="apiKey" class="api-key-inline" placeholder="API 키">
+          <input type="password" id="apiKey" class="api-key-inline" placeholder="API 키" autocomplete="off">
+          <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('apiKey', this)" title="키 보이기/가리기">👁</button>
           <span class="fallback-toggle" id="fallbackToggle">API 호출이 안 되면 → JSON 직접 붙여넣기</span>
         </div>
         <div class="title-row">
@@ -233,8 +235,10 @@
             <span class="hint" id="kakaoStatus" style="margin:0;">미설정</span>
           </div>
           <div class="watch-alert-subform">
-            <input type="text" id="kakaoJsKey" placeholder="Kakao JavaScript 키">
-            <input type="text" id="kakaoRestKey" placeholder="Kakao REST API 키">
+            <input type="password" id="kakaoJsKey" placeholder="Kakao JavaScript 키" autocomplete="off">
+            <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('kakaoJsKey', this)" title="키 보이기/가리기">👁</button>
+            <input type="password" id="kakaoRestKey" placeholder="Kakao REST API 키" autocomplete="off">
+            <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('kakaoRestKey', this)" title="키 보이기/가리기">👁</button>
             <button class="ghost" id="kakaoInitBtn" onclick="initKakao()">키 저장</button>
             <button class="ghost" id="kakaoLoginBtn" onclick="kakaoLogin()" disabled>카카오 로그인</button>
             <button class="ghost" id="kakaoTestBtn" onclick="kakaoSendTest()" disabled>테스트 전송</button>
@@ -257,6 +261,50 @@
             <span class="hint" id="kakaoQuotaHint" style="margin:0;"></span>
           </div>
           <div id="kakaoHistoryPanel" style="display:none; max-height:220px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px;"></div>
+        </div>
+      </div>
+    </details>
+
+    <div class="section-divider"></div>
+
+    <details id="settingsDetails">
+      <summary>⚙️ 설정 / 백업</summary>
+      <div class="section-body">
+        <div class="watch-alert-panel" style="margin-left:0;">
+          <div class="watch-alert-form">
+            <span style="min-width:120px;">⏱ 자동갱신 주기</span>
+            <select id="autoIntervalSel" onchange="saveAutoIntervalPref()">
+              <option value="60000">60초</option>
+              <option value="120000">2분</option>
+              <option value="300000">5분</option>
+            </select>
+            <span class="hint" style="margin:0;">감시 목록이 크거나 API 한도가 자주 걸리면 주기를 늘려보세요.</span>
+          </div>
+          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+            <span style="min-width:120px;">💾 설정 백업</span>
+            <button class="ghost" onclick="exportSettings()">내보내기(JSON 저장)</button>
+            <button class="ghost" onclick="document.getElementById('importFileInput').click()">가져오기</button>
+            <input type="file" id="importFileInput" accept="application/json" style="display:none;" onchange="importSettings(this.files[0])">
+          </div>
+          <div class="hint" style="margin:0;">감시 목록·알림 설정·조용한 시간대 등을 파일로 저장해뒀다가, 브라우저를 바꾸거나 캐시가 날아갔을 때 불러올 수 있어요. (API 키·카카오 로그인 정보는 보안상 포함되지 않아요 — 새 기기에선 직접 입력해주세요.)</div>
+        </div>
+      </div>
+    </details>
+
+    <div class="section-divider"></div>
+
+    <details id="faqDetails">
+      <summary>❓ 처음 쓰시나요? (설정 가이드)</summary>
+      <div class="section-body">
+        <div class="watch-alert-panel" style="margin-left:0;">
+          <div class="hint" style="margin:0;">
+            <b>1. 모비라이프 API 키</b> — 화면 위쪽 "API 키" 칸에 본인 키를 입력하세요. 없으면 발급처에서 먼저 받아야 해요.<br><br>
+            <b>2. 아이템 감시하기</b> — 아이템 이름을 검색해 [조회]를 누르면 자동으로 감시 목록에 추가돼요. 목록에서 아이템을 클릭하면 그 아이템 차트로 바로 이동해요.<br><br>
+            <b>3. 브라우저 알림</b> — "🔔 알림 방식 설정"에서 "알림 켜기"를 누르면 조건 도달 시 윈도우/맥 알림이 떠요. 카카오톡 설정 없이도 이것만으로 충분히 쓸 수 있어요.<br><br>
+            <b>4. 카카오톡 알림(선택)</b> — 폰으로도 받고 싶으면 Kakao Developers(developers.kakao.com)에서 앱을 만들고 JavaScript 키·REST API 키를 위 칸에 입력하세요. 이때 <b>플랫폼 도메인</b>과 <b>Redirect URI</b>를 지금 이 페이지 주소로 정확히 등록해야 하고, <b>동의항목에서 "카카오톡 메시지 전송"</b>을 켜둬야 해요. 이 단계가 좀 까다로우니, 안 되면 편하게 다시 물어보세요.<br><br>
+            <b>5. 가격 알림 설정</b> — 감시 목록에서 "알림" 버튼을 누르면 목표가/퍼센트/트레일링(고점 대비 하락) 중 원하는 방식으로 조건을 걸 수 있어요.<br><br>
+            <b>6. 탭을 열어두세요</b> — 이 앱은 브라우저 탭이 열려 있어야 감시가 돌아가요. 탭을 닫거나 컴퓨터가 잠자기 모드로 들어가면 그 순간부터 멈춰요.
+          </div>
         </div>
       </div>
     </details>
@@ -364,6 +412,7 @@ const LS_KEYS = {
   kakaoHistory: 'ggMarket.kakaoHistory',
   kakaoQuotaCount: 'ggMarket.kakaoQuotaCount',
   kakaoQuotaDate: 'ggMarket.kakaoQuotaDate',
+  autoInterval: 'ggMarket.autoInterval',
 };
 
 // 카카오 "나에게 보내기"는 기본 앱 기준 1일 호출 횟수 제한이 있다(보통 100회).
@@ -397,6 +446,71 @@ function saveWatchStateToStorage() {
   } catch (e) {}
 }
 
+// 감시 목록·알림·환경설정을 파일로 내보낸다. API 키/카카오 로그인 정보는 민감정보라 일부러 뺀다 —
+// 이 파일을 실수로 남과 공유해도 키가 새어나가지 않게 하기 위함.
+function exportSettings() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    version: 1,
+    watchList: watchList.map(w => ({ kind_id: w.kind_id, name: w.name, newListingAlert: !!w.newListingAlert, newListingThreshold: w.newListingThreshold || 1 })),
+    alertsByKind,
+    focusKindId,
+    days: document.getElementById('daysSel').value,
+    quiet: {
+      enabled: document.getElementById('quietEnabled').checked,
+      start: document.getElementById('quietStart').value,
+      end: document.getElementById('quietEnd').value,
+    },
+    autoInterval: document.getElementById('autoIntervalSel').value,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mobi-market-settings-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  setHint('✅ 설정 파일을 내려받았습니다.');
+}
+
+function importSettings(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!data || !Array.isArray(data.watchList)) throw new Error('형식이 올바르지 않습니다.');
+
+      watchList = data.watchList.map(w => ({ kind_id: w.kind_id, name: w.name, newListingAlert: !!w.newListingAlert, newListingThreshold: w.newListingThreshold || 1, price: null, count: null, soldOut: false }));
+      alertsByKind = data.alertsByKind || {};
+      Object.values(alertsByKind).flat().forEach(a => { if (a.id >= alertIdSeq) alertIdSeq = a.id + 1; });
+      focusKindId = (data.focusKindId === undefined) ? null : data.focusKindId;
+
+      if (data.days) document.getElementById('daysSel').value = data.days;
+      if (data.quiet) {
+        document.getElementById('quietEnabled').checked = !!data.quiet.enabled;
+        if (data.quiet.start) document.getElementById('quietStart').value = data.quiet.start;
+        if (data.quiet.end) document.getElementById('quietEnd').value = data.quiet.end;
+        saveQuietHours();
+      }
+      if (data.autoInterval) { document.getElementById('autoIntervalSel').value = data.autoInterval; saveAutoIntervalPref(); }
+
+      saveWatchStateToStorage();
+      saveSearchStateToStorage();
+      renderWatchList();
+      refreshWatchList();
+      setHint(`✅ 감시 목록 ${watchList.length}개를 불러왔습니다.`);
+    } catch (e) {
+      setHint('⚠️ 파일을 읽지 못했습니다 — 이 앱에서 내보낸 JSON 파일이 맞는지 확인해주세요.', true);
+    } finally {
+      document.getElementById('importFileInput').value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
 function loadStateFromStorage() {
   try {
     const savedKey = localStorage.getItem(LS_KEYS.apiKey);
@@ -422,6 +536,9 @@ function loadStateFromStorage() {
     if (savedQuietEnd) document.getElementById('quietEnd').value = savedQuietEnd;
     renderKakaoQuotaHint();
     renderKakaoHistory();
+
+    const savedInterval = localStorage.getItem(LS_KEYS.autoInterval);
+    if (savedInterval) document.getElementById('autoIntervalSel').value = savedInterval;
 
     const savedItem = localStorage.getItem(LS_KEYS.lastItem);
     if (savedItem) document.getElementById('itemName').value = savedItem;
@@ -555,6 +672,25 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// 브라우저는 백그라운드 탭의 타이머(setTimeout)를 절전을 위해 느리게 돌리기 때문에, 탭을 오래
+// 안 보고 있으면 감시 주기가 실제보다 느려질 수 있다. 완전히 막을 방법은 없지만(브라우저 정책이라),
+// 최소한 탭으로 돌아왔을 때 "그동안 느렸을 수 있다"고 알려주고 바로 최신 데이터로 따라잡아준다.
+let tabHiddenSince = null;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    tabHiddenSince = Date.now();
+    return;
+  }
+  if (!tabHiddenSince) return;
+  const hiddenMinutes = Math.round((Date.now() - tabHiddenSince) / 60000);
+  tabHiddenSince = null;
+  if (hiddenMinutes >= 2) {
+    setHint(`⏱ 탭이 ${hiddenMinutes}분간 백그라운드에 있어서 그동안 감시가 느려졌을 수 있어요 — 지금 최신 데이터로 갱신할게요.`);
+    if (watchList.length) refreshWatchList();
+    if (lastKindId) run();
+  }
+});
+
 // API는 시간을 UTC로 주는데, 마비노기 모바일은 한국 게임이라 표시는 무조건
 // 한국시간(KST, UTC+9) 기준이어야 한다. 브라우저 로컬 시간대(getMonth/getHours 등)에
 // 의존하면 해외에서 접속했을 때 엉뚱한 시간이 나오므로, UTC 시각에 9시간을 직접 더한 뒤
@@ -589,6 +725,14 @@ function kstWeekday(isoUtc) {
   return toKstDate(isoUtc).getUTCDay();
 }
 
+// API 키 입력칸을 평문(text)/가림(password)으로 토글 — 화면공유·스크린샷 실수로 키가 찍히는 걸 방지
+function toggleKeyVisibility(inputId, btn) {
+  const el = document.getElementById(inputId);
+  const showing = el.type === 'text';
+  el.type = showing ? 'password' : 'text';
+  btn.textContent = showing ? '👁' : '🙈';
+}
+
 function headers() {
   const key = document.getElementById('apiKey').value.trim();
   return { "Authorization": "Bearer " + key, "Accept": "application/json" };
@@ -598,18 +742,21 @@ function headers() {
 // 감시 목록이 여러 개면 refreshWatchList()가 아이템마다 동시에 2번씩(스냅샷+이력) 요청을 쏘고,
 // 여기에 집중 감시(15초)·자동조회(60초)까지 겹치면 순간적으로 요청이 몰려 서버의 "분당 30회"
 // 한도를 금방 넘긴다. 그래서 BASE_URL로 가는 모든 요청을 이 큐 하나로 모아서, 최근 60초 안의
-// 호출 수를 직접 세어가며 안전 마진(25회) 안에서만 순차적으로 내보낸다 — 즉 서버가 막기 전에
+// 호출 수를 직접 세어가며 안전 마진 안에서만 순차적으로 내보낸다 — 즉 서버가 막기 전에
 // 우리 쪽에서 먼저 속도를 늦춰서 429 자체가 덜 뜨게 만드는 방식.
-const API_SAFE_LIMIT_PER_MIN = 25; // 서버 한도(30)보다 낮게 잡아 여유를 둠
+// + 그래도 429가 뜨면(감시 목록이 아주 크거나, 같은 키로 여러 탭/기기를 동시에 쓰는 경우 등)
+//   즉시 에러로 보여주지 않고 잠깐 쉬었다가 같은 요청을 자동으로 재시도한다.
+const API_SAFE_LIMIT_PER_MIN = 20; // 서버 한도(30)보다 넉넉히 낮게 잡아 여유를 둠
 const API_WINDOW_MS = 60000;
-const API_CALL_GAP_MS = 150; // 연속 호출 사이 최소 간격 — 순간적으로 몰아 쏘는 것 자체를 방지
+const API_CALL_GAP_MS = 200; // 연속 호출 사이 최소 간격 — 순간적으로 몰아 쏘는 것 자체를 방지
+const API_429_MAX_RETRIES = 4;
 let apiCallLog = [];
 let apiQueue = [];
 let apiQueueRunning = false;
 
 function apiFetch(url, opts) {
   return new Promise((resolve, reject) => {
-    apiQueue.push({ url, opts, resolve, reject });
+    apiQueue.push({ url, opts, resolve, reject, retries: 0 });
     runApiQueue();
   });
 }
@@ -630,6 +777,15 @@ async function runApiQueue() {
     apiCallLog.push(Date.now());
     try {
       const res = await fetch(job.url, job.opts);
+      if (res.status === 429 && job.retries < API_429_MAX_RETRIES) {
+        // 자체 제한을 걸어놨는데도 429가 왔다는 건 실제 서버 사정이 우리 예상보다 빡빡하다는 뜻.
+        // 에러로 바로 던지지 말고, 지수 백오프(2초→4초→8초→16초)로 쉬었다가 같은 요청을 다시 큐 맨 앞에 넣는다.
+        job.retries += 1;
+        const backoffMs = 2000 * Math.pow(2, job.retries - 1);
+        apiQueue.unshift(job);
+        await new Promise(r => setTimeout(r, backoffMs));
+        continue;
+      }
       job.resolve(res);
     } catch (e) {
       job.reject(e);
@@ -1268,6 +1424,24 @@ function drawCandles(rawPoints, min, max) {
     svg += `<polyline points="${linePts}" fill="none" stroke="var(--accent)" stroke-width="2.2" opacity="0.85" stroke-linejoin="round" stroke-linecap="round"/>`;
   }
 
+  // 패치일(목요일) 마커 — 이 게임은 매주 목요일 패치(또는 그 전날 라이브 방송)로 시세가
+  // 구조적으로 크게 튈 때가 많아서, "이 변동이 그냥 흐름인지 패치 때문인지" 구분하는 데 도움이
+  // 되도록 각 목요일의 첫 데이터 지점에 세로 마커를 찍는다. (캔들에 안 가려지게 세로선만 먼저 그리고,
+  // 라벨은 맨 위에 나중에 얹는다 — 아래 캔들 루프 이후 참고)
+  let lastPatchDayKey = null;
+  const patchMarkerX = [];
+  points.forEach((p, i) => {
+    if (!p.time) return;
+    const d = toKstDate(p.time);
+    if (d.getUTCDay() !== 4) return; // 목요일만
+    const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+    if (key === lastPatchDayKey) return;
+    lastPatchDayKey = key;
+    const cx = x(i);
+    patchMarkerX.push(cx);
+    svg += `<line x1="${cx}" y1="${padT}" x2="${cx}" y2="${padT + plotH}" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.55"/>`;
+  });
+
   let prevClose = null;
   points.forEach((p, i) => {
     const c = p.close;
@@ -1300,6 +1474,32 @@ function drawCandles(rawPoints, min, max) {
 
     prevClose = c;
   });
+
+  // 패치일 라벨은 캔들 위(맨 위)에 나중에 얹어서 안 가리게 한다.
+  patchMarkerX.forEach(cx => {
+    svg += `<text x="${cx}" y="${padT - 4}" text-anchor="middle" font-size="10" fill="#f59e0b" font-weight="700">🛠패치</text>`;
+  });
+
+  // 단기 이동평균선(EMA) — 캔들보다 나중에(=위에) 그려야 캔들 색상에 안 묻힌다.
+  // 이 게임은 매주 정해진 패치로 가격 레벨 자체가 계단식으로 바뀌기 때문에, 주식에서 흔히 쓰는
+  // 20일 같은 긴 이평선은 옛 레벨을 오래 끌고 다녀 오히려 잘못된 신호를 준다. 그래서 최근 흐름에
+  // 빠르게 반응하는 짧은 기간(3)의 EMA만 참고용으로 겹쳐 그린다.
+  if (n >= 3) {
+    const emaPeriod = Math.min(3, n);
+    const k = 2 / (emaPeriod + 1);
+    const emaValues = [];
+    let emaPrev = points[0].close;
+    points.forEach((p, i) => {
+      emaPrev = i === 0 ? p.close : (p.close - emaPrev) * k + emaPrev;
+      emaValues.push(emaPrev);
+    });
+    const emaLinePts = emaValues.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+    // 어두운 외곽선을 먼저 깔아 배경(캔들 색 등)과 대비를 준 뒤, 그 위에 밝은 색 선을 그린다 — 훨씬 잘 보임.
+    svg += `<polyline points="${emaLinePts}" fill="none" stroke="#000000" stroke-width="4.5" opacity="0.35" stroke-linejoin="round" stroke-linecap="round"/>`;
+    svg += `<polyline points="${emaLinePts}" fill="none" stroke="#f472b6" stroke-width="2.4" opacity="1" stroke-linejoin="round" stroke-linecap="round"/>`;
+    svg += `<rect x="${padL + 2}" y="${padT + 4}" width="${16 + String(emaPeriod).length * 7 + 44}" height="16" rx="3" fill="#000000" opacity="0.35"/>`;
+    svg += `<text x="${padL + 8}" y="${padT + 15}" font-size="11" font-weight="700" fill="#f472b6">— EMA(${emaPeriod})</text>`;
+  }
 
   // 체결 건수(거래량) 바 — 가격 캔들과 같은 x축을 공유하는 하단 패널.
   // 이 구간이 실제로 활발하게 거래됐는지, 아니면 체결이 뜸했는지를 눈으로 바로 보여준다.
@@ -1596,11 +1796,21 @@ function hideTooltip() {
 // 30일 이상 조회 중일 땐 자동갱신 주기를 5분으로 늘린다.
 function autoRefreshIntervalMs() {
   const days = parseInt(document.getElementById('daysSel').value, 10);
-  return days >= 30 ? 300000 : 60000;
+  const daysBasedMin = days >= 30 ? 300000 : 60000; // 30일 이상 보기는 이력 데이터가 커서 최소 5분 간격을 강제
+  const userPref = Number(localStorage.getItem(LS_KEYS.autoInterval)) || 60000;
+  return Math.max(daysBasedMin, userPref);
+}
+
+function saveAutoIntervalPref() {
+  const val = document.getElementById('autoIntervalSel').value;
+  localStorage.setItem(LS_KEYS.autoInterval, val);
+  if (autoTimer) { clearTimeout(autoTimer); scheduleAutoRefresh(); } // 이미 켜져있으면 새 주기로 즉시 반영
 }
 
 function autoRefreshLabel(ms) {
-  return ms >= 300000 ? '자동갱신 ON (5분)' : '자동갱신 ON (60초)';
+  if (ms >= 300000) return '자동갱신 ON (5분)';
+  if (ms >= 120000) return '자동갱신 ON (2분)';
+  return '자동갱신 ON (60초)';
 }
 
 function scheduleAutoRefresh() {
@@ -1675,9 +1885,12 @@ function renderAlertPanelHtml(kindId) {
         const kindLabel = a.type === 'trailing'
           ? `고점 대비 ${a.pct}% 하락${a.peakPrice ? ` · 현재 고점 ${Math.round(a.peakPrice).toLocaleString()}` : ''}`
           : `${a.price.toLocaleString()} ${a.dir === 'above' ? '이상' : '이하'}`;
+        const marginLabel = (a.type !== 'trailing' && a.marginPct)
+          ? `<span class="note" style="color:var(--accent, #3b82f6);">여유폭 ±${a.marginPct}%</span>`
+          : (a.type !== 'trailing' ? `<span class="note" style="color:var(--dim);">여유폭 없음</span>` : '');
         return `
         <li class="alert-item${a.fired ? ' fired' : ''}">
-          <span class="txt">${kindLabel}${a.fired ? '<span class="alert-hit">● 도달함</span>' : ''}${a.note ? `<span class="note">${a.note}</span>` : ''}</span>
+          <span class="txt">${kindLabel}${a.fired ? '<span class="alert-hit">● 도달함</span>' : ''}${a.note ? `<span class="note">${a.note}</span>` : ''}${marginLabel}</span>
           ${a.fired && a.type !== 'trailing' ? `<button class="ghost" onclick="rearmPriceAlert(${kindId}, ${a.id})">다시 감시</button>` : ''}
           <button class="ghost" onclick="removePriceAlert(${kindId}, ${a.id})">삭제</button>
         </li>
@@ -2022,20 +2235,37 @@ async function sendKakaoMemo(title, body, opts) {
   }
 }
 
-// --- 배칭: 짧은 시간 안에 여러 알림이 동시에 뜨면 카톡 호출 1번으로 묶어서 보낸다(호출 횟수 절약 + 스팸 방지) ---
+// --- 배칭: 짧은 시간 안에 여러 알림이 뜨면 카톡 호출 하나로 묶어서 보낸다(호출 횟수 절약 + 스팸 방지) ---
+// 1) 디바운스: 새 알림이 들어올 때마다 대기시간을 살짝 늘려서, 연달아 계속 조건을 만족하는
+//    변동장에서도 여러 알림이 최대한 한 번에 묶이게 한다 (단, 무한정 미루진 않도록 상한을 둠).
+// 2) 쿨다운: 배칭과 별개로, 실제 카톡 전송 사이 최소 간격을 둬서 "카톡이 너무 많이 온다"는
+//    느낌 자체를 줄인다.
 let kakaoQueue = [];
 let kakaoFlushTimer = null;
-const KAKAO_BATCH_WINDOW_MS = 8000; // 이 시간 안에 들어온 알림은 하나로 묶임
+let kakaoBatchStartedAt = null;
+let lastKakaoSendAt = 0;
+const KAKAO_BATCH_WINDOW_MS = 15000;   // 알림이 새로 들어올 때마다 이만큼 더 기다렸다가 묶어 보냄
+const KAKAO_MAX_BATCH_WAIT_MS = 45000; // 계속 들어와도 최대 이 시간까지만 기다림
+const KAKAO_MIN_SEND_GAP_MS = 30000;   // 실제 카톡 전송 사이 최소 간격(쿨다운)
 
 function queueKakaoAlert(kindId, title, body, itemName) {
   kakaoQueue.push({ kindId, title, body, itemName });
-  if (!kakaoFlushTimer) {
-    kakaoFlushTimer = setTimeout(flushKakaoQueue, KAKAO_BATCH_WINDOW_MS);
-  }
+  const now = Date.now();
+  if (!kakaoBatchStartedAt) kakaoBatchStartedAt = now;
+  if (kakaoFlushTimer) clearTimeout(kakaoFlushTimer);
+
+  const remainingBatchBudget = Math.max(KAKAO_MAX_BATCH_WAIT_MS - (now - kakaoBatchStartedAt), 0);
+  const windowDelay = Math.min(KAKAO_BATCH_WINDOW_MS, remainingBatchBudget);
+  const cooldownDelay = KAKAO_MIN_SEND_GAP_MS - (now - lastKakaoSendAt);
+  const delay = Math.max(windowDelay, cooldownDelay, 200);
+
+  kakaoFlushTimer = setTimeout(flushKakaoQueue, delay);
 }
 
 function flushKakaoQueue() {
   kakaoFlushTimer = null;
+  kakaoBatchStartedAt = null;
+  lastKakaoSendAt = Date.now();
   if (!kakaoQueue.length) return;
   const batch = kakaoQueue;
   kakaoQueue = [];
@@ -2389,8 +2619,33 @@ async function refreshChartCacheForItem(kindId, name) {
   } catch (e) { /* 이력 갱신 실패는 조용히 넘어가고 다음 주기에 재시도 */ }
 }
 
+// 감시 목록이 크면(예: 15개 이상) 매 주기마다 전부 다 새로고침하는 것 자체가 요청 폭탄의
+// 근본 원인이 된다. 그래서 한 번에 최대 N개까지만 갱신하고, 나머지는 다음 주기로 순환시켜
+// 감시 목록 크기와 무관하게 사이클당 요청량을 일정 수준으로 묶어둔다. 지금 보고 있는 아이템과
+// 집중 감시 중인 아이템은 매번 우선적으로 갱신 대상에 포함시킨다.
+const WATCHLIST_REFRESH_BATCH_SIZE = 10;
+let watchlistRefreshCursor = 0;
+
 function refreshWatchList() {
-  watchList.forEach(w => refreshWatchItem(w));
+  if (!watchList.length) return;
+  if (watchList.length <= WATCHLIST_REFRESH_BATCH_SIZE) {
+    watchList.forEach(w => refreshWatchItem(w));
+    return;
+  }
+
+  const priority = watchList.filter(w => w.kind_id === lastKindId || w.kind_id === focusKindId);
+  const priorityIds = new Set(priority.map(w => w.kind_id));
+  const rest = watchList.filter(w => !priorityIds.has(w.kind_id));
+
+  const slotsLeft = Math.max(WATCHLIST_REFRESH_BATCH_SIZE - priority.length, 0);
+  const rotated = [];
+  for (let i = 0; i < slotsLeft && rest.length; i++) {
+    const idx = watchlistRefreshCursor % rest.length;
+    rotated.push(rest[idx]);
+    watchlistRefreshCursor++;
+  }
+
+  [...priority, ...rotated].forEach(w => refreshWatchItem(w));
 }
 
 // "n초 전" / "n분 전" 형태로 변환. 아직 한 번도 갱신 안 됐으면 빈 문자열.

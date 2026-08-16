@@ -339,12 +339,7 @@
         <select id="candleSel" style="display:none;"></select>
         <select id="maTypeSel" onchange="saveMaPref()" title="이동평균선 종류">
           <option value="none">이평선 없음</option>
-          <option value="sma">SMA</option>
-          <option value="ema">EMA</option>
-          <option value="smma">SMMA</option>
-          <option value="wma">WMA</option>
           <option value="hma" selected>HMA (추천)</option>
-          <option value="dema">DEMA</option>
           <option value="tema">TEMA</option>
         </select>
         <button id="loadBtn">조회</button>
@@ -1533,11 +1528,13 @@ function drawCandles(rawPoints, min, max) {
     svg += `<text class="axis-label axis-label-weekday" x="${x(i)}" y="${H-6}" text-anchor="middle">${weekday}</text>`;
   });
 
-  // 종가를 잇는 얇은 라인. 캔들이 점처럼 듬성듬성해도(체결 적은 1분/5분봉 등)
-  // 이 선 하나로 전체 흐름을 한눈에 볼 수 있게 캔들보다 먼저(=아래) 그린다.
-  if (n > 1) {
+  // 종가를 잇는 얇은 라인 — 이평선이 꺼져 있을 때만 그린다. 이평선(특히 HMA(3)처럼 짧은 기간)이
+  // 켜져 있으면 그 선이 이미 "듬성듬성한 캔들을 이어서 흐름을 보여주는" 역할을 대신 해주기 때문에,
+  // 종가선까지 같이 그리면 사실상 비슷한 선 두 개가 겹쳐서 혼란만 줄 뿐이다.
+  const maTypeForLineCheck = document.getElementById('maTypeSel').value;
+  if (n > 1 && maTypeForLineCheck === 'none') {
     const linePts = points.map((p, i) => `${x(i)},${y(p.close)}`).join(' ');
-    svg += `<polyline points="${linePts}" fill="none" stroke="var(--accent)" stroke-width="2.2" opacity="0.85" stroke-linejoin="round" stroke-linecap="round"/>`;
+    svg += `<polyline points="${linePts}" fill="none" stroke="var(--accent)" stroke-width="1.4" opacity="0.7" stroke-linejoin="round" stroke-linecap="round"/>`;
   }
 
   // 패치일(목요일) 마커 — 이 게임은 매주 목요일 패치(또는 그 전날 라이브 방송)로 시세가
@@ -1610,11 +1607,11 @@ function drawCandles(rawPoints, min, max) {
       const maLinePts = maValues.map((v, i) => `${x(i)},${y(v)}`).join(' ');
       // 얇은 어두운 외곽선으로 배경과 최소한의 대비만 주고, 선 자체는 너무 두껍지 않게 —
       // 예전엔 너무 안 보였고, 그 다음엔 너무 두꺼워서 캔들을 덮어버렸어서 중간값을 잡음.
-      svg += `<polyline points="${maLinePts}" fill="none" stroke="#000000" stroke-width="3" opacity="0.25" stroke-linejoin="round" stroke-linecap="round"/>`;
-      svg += `<polyline points="${maLinePts}" fill="none" stroke="#f472b6" stroke-width="1.6" opacity="0.9" stroke-linejoin="round" stroke-linecap="round"/>`;
+      svg += `<polyline points="${maLinePts}" fill="none" stroke="#000000" stroke-width="4.5" opacity="0.8" stroke-linejoin="round" stroke-linecap="round"/>`;
+      svg += `<polyline points="${maLinePts}" fill="none" stroke="#facc15" stroke-width="2" opacity="0.9" stroke-linejoin="round" stroke-linecap="round"/>`;
       const label = `— ${maType.toUpperCase()}(${maPeriod})`;
       svg += `<rect x="${padL + 2}" y="${padT + 4}" width="${label.length * 6.5 + 12}" height="16" rx="3" fill="#000000" opacity="0.3"/>`;
-      svg += `<text x="${padL + 8}" y="${padT + 15}" font-size="11" font-weight="700" fill="#f472b6">${label}</text>`;
+      svg += `<text x="${padL + 8}" y="${padT + 15}" font-size="11" font-weight="700" fill="#facc15">${label}</text>`;
     }
   }
 

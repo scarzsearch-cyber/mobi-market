@@ -337,6 +337,16 @@
           <option value="90">90일 (일봉)</option>
         </select>
         <select id="candleSel" style="display:none;"></select>
+        <select id="maTypeSel" onchange="saveMaPref()" title="이동평균선 종류">
+          <option value="none">이평선 없음</option>
+          <option value="sma">SMA</option>
+          <option value="ema">EMA</option>
+          <option value="smma">SMMA</option>
+          <option value="wma">WMA</option>
+          <option value="hma" selected>HMA (추천)</option>
+          <option value="dema">DEMA</option>
+          <option value="tema">TEMA</option>
+        </select>
         <button id="loadBtn">조회</button>
         <button class="ghost" id="autoBtn">자동갱신 OFF</button>
       </div>
@@ -371,6 +381,28 @@ let lastItemName = null;
 // 같은 아이템 내에서 한 번 불러온 (days -> 응답) 조합은 캐시해두고 재사용한다.
 // 진짜로 새 데이터가 필요할 때(조회 버튼 클릭, 자동갱신)만 캐시를 갱신한다.
 let historyCacheByKind = {}; // { [kind_id]: { [days]: { histData, ts } } } — 아이템이 바뀌어도 유지됨(감시목록 탭 전환 시 재사용)
+let historyCacheOrder = []; // LRU 순서 추적용 — 오래 켜놓고 이것저것 검색하다 보면 무한정 쌓이는 걸 방지
+const HISTORY_CACHE_MAX_KINDS = 20;
+
+// historyCacheByKind에 새로 쓸 때마다 호출 — LRU 순서를 갱신하고, 너무 오래된 항목은 정리해서
+// 세션을 오래 켜놓고 여러 아이템을 검색해도 메모리가 무한정 늘어나지 않게 한다.
+function touchHistoryCacheLRU(kindId) {
+  const idx = historyCacheOrder.indexOf(kindId);
+  if (idx !== -1) historyCacheOrder.splice(idx, 1);
+  historyCacheOrder.push(kindId);
+
+  let attempts = 0;
+  while (historyCacheOrder.length > HISTORY_CACHE_MAX_KINDS && attempts < historyCacheOrder.length) {
+    const evictId = historyCacheOrder.shift();
+    attempts++;
+    // 지금 보고 있거나 감시 목록에 있는 건 지우면 안 됨 (다시 넣어서 앞으로 안 밀리게)
+    if (evictId === lastKindId || watchList.some(w => w.kind_id === evictId)) {
+      historyCacheOrder.push(evictId);
+      continue;
+    }
+    delete historyCacheByKind[evictId];
+  }
+}
 let baseResolution = null;   // API가 실제로 준 원본 해상도 ('10min' | 'hourly' | 'daily')
 let basePoints = [];         // 원본 해상도 그대로의 (필터링된) 포인트
 let baseMin = 0, baseMax = 0;
@@ -413,6 +445,7 @@ const LS_KEYS = {
   kakaoQuotaCount: 'ggMarket.kakaoQuotaCount',
   kakaoQuotaDate: 'ggMarket.kakaoQuotaDate',
   autoInterval: 'ggMarket.autoInterval',
+  maType: 'ggMarket.maType',
 };
 
 // 카카오 "나에게 보내기"는 기본 앱 기준 1일 호출 횟수 제한이 있다(보통 100회).
@@ -539,6 +572,9 @@ function loadStateFromStorage() {
 
     const savedInterval = localStorage.getItem(LS_KEYS.autoInterval);
     if (savedInterval) document.getElementById('autoIntervalSel').value = savedInterval;
+
+    const savedMaType = localStorage.getItem(LS_KEYS.maType);
+    if (savedMaType) document.getElementById('maTypeSel').value = savedMaType;
 
     const savedItem = localStorage.getItem(LS_KEYS.lastItem);
     if (savedItem) document.getElementById('itemName').value = savedItem;
@@ -880,6 +916,7 @@ async function run() {
     const histData = await fetchHistoryData(picked.kind_id, days);
     const kindCache = historyCacheByKind[picked.kind_id] || (historyCacheByKind[picked.kind_id] = {});
     kindCache[days] = { histData, ts: Date.now() };
+    touchHistoryCacheLRU(picked.kind_id);
 
     render(picked, histData);
     ensureWatchListHasItem(picked); // 조회한 아이템 하나만 갱신 (나머지 목록은 자동갱신이 켜져 있을 때만 갱신됨)
@@ -927,6 +964,7 @@ async function switchDays() {
   try {
     const histData = await fetchHistoryData(lastKindId, days);
     kindCache[days] = { histData, ts: Date.now() };
+    touchHistoryCacheLRU(lastKindId);
     render(picked, histData);
     setHint('');
   } catch (e) {
@@ -1318,6 +1356,84 @@ function renderChartForSelection() {
   drawCandles(agg, min, max);
 }
 
+// ---- 이동평균선 계산 함수들 ----
+function computeSMA(closes, period) {
+  return closes.map((_, i) => {
+    const start = Math.max(0, i - period + 1);
+    const slice = closes.slice(start, i + 1);
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
+  });
+}
+
+function computeEMA(closes, period) {
+  const k = 2 / (period + 1);
+  const out = [];
+  let prev = closes[0];
+  closes.forEach((c, i) => { prev = i === 0 ? c : (c - prev) * k + prev; out.push(prev); });
+  return out;
+}
+
+// SMMA(=Wilder's RMA) — SMA보다도 더 느리게 반응하는 평활 평균.
+function computeSMMA(closes, period) {
+  const out = [];
+  let prev = closes[0];
+  closes.forEach((c, i) => { prev = i === 0 ? c : prev + (c - prev) / period; out.push(prev); });
+  return out;
+}
+
+function computeWMA(closes, period) {
+  return closes.map((_, i) => {
+    const start = Math.max(0, i - period + 1);
+    const slice = closes.slice(start, i + 1);
+    let wsum = 0, sum = 0;
+    slice.forEach((v, idx) => { const w = idx + 1; wsum += w; sum += v * w; });
+    return sum / wsum;
+  });
+}
+
+// HMA(Hull MA) — WMA(2*WMA(n/2) - WMA(n), sqrt(n)). 지연은 최소화하면서 부드러움은 유지하도록 설계됨.
+function computeHMA(closes, period) {
+  const halfP = Math.max(1, Math.round(period / 2));
+  const sqrtP = Math.max(1, Math.round(Math.sqrt(period)));
+  const wmaHalf = computeWMA(closes, halfP);
+  const wmaFull = computeWMA(closes, period);
+  const diff = closes.map((_, i) => 2 * wmaHalf[i] - wmaFull[i]);
+  return computeWMA(diff, sqrtP);
+}
+
+// DEMA = 2*EMA - EMA(EMA) — EMA보다 지연이 적음.
+function computeDEMA(closes, period) {
+  const ema1 = computeEMA(closes, period);
+  const ema2 = computeEMA(ema1, period);
+  return closes.map((_, i) => 2 * ema1[i] - ema2[i]);
+}
+
+// TEMA = 3*EMA - 3*EMA(EMA) + EMA(EMA(EMA)) — DEMA보다도 지연이 더 적지만 노이즈에 더 민감.
+function computeTEMA(closes, period) {
+  const ema1 = computeEMA(closes, period);
+  const ema2 = computeEMA(ema1, period);
+  const ema3 = computeEMA(ema2, period);
+  return closes.map((_, i) => 3 * ema1[i] - 3 * ema2[i] + ema3[i]);
+}
+
+function computeMA(closes, period, type) {
+  switch (type) {
+    case 'sma': return computeSMA(closes, period);
+    case 'smma': return computeSMMA(closes, period);
+    case 'wma': return computeWMA(closes, period);
+    case 'hma': return computeHMA(closes, period);
+    case 'dema': return computeDEMA(closes, period);
+    case 'tema': return computeTEMA(closes, period);
+    case 'ema': return computeEMA(closes, period);
+    default: return null; // 'none'
+  }
+}
+
+function saveMaPref() {
+  localStorage.setItem(LS_KEYS.maType, document.getElementById('maTypeSel').value);
+  if (basePoints.length) renderChartForSelection();
+}
+
 function drawCandles(rawPoints, min, max) {
   // 실제 체결이 있었던 구간만 사용 (sample_count 0인 무거래 구간은 제외해 노이즈 방지)
   const points = rawPoints.filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined);
@@ -1480,25 +1596,26 @@ function drawCandles(rawPoints, min, max) {
     svg += `<text x="${cx}" y="${padT - 4}" text-anchor="middle" font-size="10" fill="#f59e0b" font-weight="700">🛠패치</text>`;
   });
 
-  // 단기 이동평균선(EMA) — 캔들보다 나중에(=위에) 그려야 캔들 색상에 안 묻힌다.
+  // 이동평균선 — 캔들보다 나중에(=위에) 그려야 캔들 색상에 안 묻힌다.
   // 이 게임은 매주 정해진 패치로 가격 레벨 자체가 계단식으로 바뀌기 때문에, 주식에서 흔히 쓰는
-  // 20일 같은 긴 이평선은 옛 레벨을 오래 끌고 다녀 오히려 잘못된 신호를 준다. 그래서 최근 흐름에
-  // 빠르게 반응하는 짧은 기간(3)의 EMA만 참고용으로 겹쳐 그린다.
-  if (n >= 3) {
-    const emaPeriod = Math.min(3, n);
-    const k = 2 / (emaPeriod + 1);
-    const emaValues = [];
-    let emaPrev = points[0].close;
-    points.forEach((p, i) => {
-      emaPrev = i === 0 ? p.close : (p.close - emaPrev) * k + emaPrev;
-      emaValues.push(emaPrev);
-    });
-    const emaLinePts = emaValues.map((v, i) => `${x(i)},${y(v)}`).join(' ');
-    // 어두운 외곽선을 먼저 깔아 배경(캔들 색 등)과 대비를 준 뒤, 그 위에 밝은 색 선을 그린다 — 훨씬 잘 보임.
-    svg += `<polyline points="${emaLinePts}" fill="none" stroke="#000000" stroke-width="4.5" opacity="0.35" stroke-linejoin="round" stroke-linecap="round"/>`;
-    svg += `<polyline points="${emaLinePts}" fill="none" stroke="#f472b6" stroke-width="2.4" opacity="1" stroke-linejoin="round" stroke-linecap="round"/>`;
-    svg += `<rect x="${padL + 2}" y="${padT + 4}" width="${16 + String(emaPeriod).length * 7 + 44}" height="16" rx="3" fill="#000000" opacity="0.35"/>`;
-    svg += `<text x="${padL + 8}" y="${padT + 15}" font-size="11" font-weight="700" fill="#f472b6">— EMA(${emaPeriod})</text>`;
+  // 20일 SMA 같은 느린 이평선은 옛 레벨을 오래 끌고 다녀 오히려 잘못된 신호를 준다. 종류/기간은
+  // 사용자가 위 드롭다운에서 고를 수 있고, 기본값은 지연은 적으면서도 단발성 튀는 체결엔 덜
+  // 흔들리는 HMA로 잡아뒀다.
+  const maType = document.getElementById('maTypeSel').value;
+  if (maType !== 'none' && n >= 2) {
+    const maPeriod = Math.min(3, n);
+    const closes = points.map(p => p.close);
+    const maValues = computeMA(closes, maPeriod, maType);
+    if (maValues) {
+      const maLinePts = maValues.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+      // 얇은 어두운 외곽선으로 배경과 최소한의 대비만 주고, 선 자체는 너무 두껍지 않게 —
+      // 예전엔 너무 안 보였고, 그 다음엔 너무 두꺼워서 캔들을 덮어버렸어서 중간값을 잡음.
+      svg += `<polyline points="${maLinePts}" fill="none" stroke="#000000" stroke-width="3" opacity="0.25" stroke-linejoin="round" stroke-linecap="round"/>`;
+      svg += `<polyline points="${maLinePts}" fill="none" stroke="#f472b6" stroke-width="1.6" opacity="0.9" stroke-linejoin="round" stroke-linecap="round"/>`;
+      const label = `— ${maType.toUpperCase()}(${maPeriod})`;
+      svg += `<rect x="${padL + 2}" y="${padT + 4}" width="${label.length * 6.5 + 12}" height="16" rx="3" fill="#000000" opacity="0.3"/>`;
+      svg += `<text x="${padL + 8}" y="${padT + 15}" font-size="11" font-weight="700" fill="#f472b6">${label}</text>`;
+    }
   }
 
   // 체결 건수(거래량) 바 — 가격 캔들과 같은 x축을 공유하는 하단 패널.
@@ -2396,7 +2513,6 @@ function toggleFocusWatch(kindId) {
     startFocusTimer();
   }
   renderWatchList();
-  saveWatchStateToStorage();
 }
 
 function startFocusTimer() {
@@ -2419,7 +2535,6 @@ function toggleNewListingAlert(kindId) {
   if (!w) return;
   w.newListingAlert = !w.newListingAlert;
   renderWatchList();
-  saveWatchStateToStorage();
 }
 
 // 신규 매물 알림 최소 증가 수량 설정 (예: 3으로 두면 2개 늘어난 건 무시하고 3개 이상 늘 때만 알림)
@@ -2588,7 +2703,7 @@ async function refreshWatchItem(w) {
     if (w.newListingAlert && prevCount !== null && (found.total_count - prevCount) >= threshold) {
       notifyNewListing(w, prevCount, found.total_count);
     }
-    renderWatchList();
+    patchWatchItemDisplay(w.kind_id); // 가격/수량/갱신시각만 가볍게 텍스트 교체 (알림 발동으로 배지가 바뀌는 경우는 checkPriceAlerts가 이미 전체 재렌더링을 처리함)
 
     // 스냅샷(가격/수량)뿐 아니라 캔들 차트용 시세이력도 백그라운드로 함께 갱신해두면 좋지만,
     // 감시 아이템마다 매번 이 두 번째 요청까지 쏘면 호출량이 배로 늘어 429의 주된 원인이 된다.
@@ -2613,6 +2728,7 @@ async function refreshChartCacheForItem(kindId, name) {
     const histData = await fetchHistoryData(kindId, days);
     const kindCache = historyCacheByKind[kindId] || (historyCacheByKind[kindId] = {});
     kindCache[days] = { histData, ts: Date.now() };
+    touchHistoryCacheLRU(kindId);
     if (lastKindId === kindId) {
       render({ kind_id: kindId, name }, histData);
     }
@@ -2670,6 +2786,20 @@ function tickWatchTimes() {
 }
 setInterval(tickWatchTimes, 1000);
 
+// 감시 목록 전체를 다시 그리지 않고, 가격/수량/갱신시각처럼 자주 바뀌는 텍스트만 살짝 바꿔치기한다.
+// 전체 재렌더링(renderWatchList)은 입력 중이던 알림 설정 폼까지 통째로 날려버려서, 백그라운드
+// 갱신처럼 자주 도는 곳에서는 이 가벼운 패치 함수를 대신 쓴다.
+function patchWatchItemDisplay(kindId) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const priceEl = document.getElementById(`wPrice_${kindId}`);
+  const countEl = document.getElementById(`wCount_${kindId}`);
+  const updatedEl = document.getElementById(`wUpdated_${kindId}`);
+  if (priceEl) priceEl.textContent = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '조회 중…');
+  if (countEl) countEl.textContent = w.count !== null ? w.count.toLocaleString() + '개' : '—';
+  if (updatedEl) updatedEl.textContent = timeAgoText(w.lastUpdated);
+}
+
 function renderWatchList() {
   const box = document.getElementById('watchList');
   if (!box) return;
@@ -2690,8 +2820,8 @@ function renderWatchList() {
       <div class="watch-item-wrap">
         <div class="watch-item">
           <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${w.name}</span>
-          <span class="w-price">${priceTxt}</span>
-          <span class="w-count">${countTxt}</span>
+          <span class="w-price" id="wPrice_${w.kind_id}">${priceTxt}</span>
+          <span class="w-count" id="wCount_${w.kind_id}">${countTxt}</span>
           <span class="w-updated" id="wUpdated_${w.kind_id}">${timeAgoText(w.lastUpdated)}</span>
           ${firedCount ? `<span class="alert-hit">🔔 ${firedCount}</span>` : ''}
           <button class="ghost${isFocus ? ' toggle-on' : ''}" onclick="toggleFocusWatch(${w.kind_id})" title="집중 감시 — 이 아이템만 ${FOCUS_INTERVAL_MS / 1000}초마다 갱신">🎯${isFocus ? ' 집중감시중' : ''}</button>

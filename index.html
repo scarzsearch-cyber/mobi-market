@@ -196,7 +196,10 @@
     </div>
 
     <div class="controls">
-      <input type="text" id="itemName" placeholder="아이템 이름 (예: 파동의 영혼석)" value="파동의 영혼석">
+      <div style="position:relative; flex:1; min-width:180px;">
+        <input type="text" id="itemName" placeholder="아이템 이름 (예: 파동의 영혼석)" value="파동의 영혼석" autocomplete="off" style="width:100%;">
+        <ul id="itemSuggestions" style="display:none; position:absolute; top:100%; left:0; right:0; z-index:20; margin:4px 0 0; padding:4px; list-style:none; background:var(--panel); border:1px solid var(--line); border-radius:8px; max-height:220px; overflow-y:auto; box-shadow:0 4px 12px rgba(0,0,0,0.4);"></ul>
+      </div>
       <button id="loadBtnTop">조회</button>
       <span class="hint inline-hint">※ 조회하면 자동 추가·이름 클릭 시 차트 이동·"알림" 버튼으로 가격 알림 설정</span>
     </div>
@@ -256,6 +259,12 @@
             <input type="time" id="quietEnd" value="08:00" onchange="saveQuietHours()" style="width:90px;">
           </div>
           <div class="hint" style="margin:0;">이 시간대엔 카카오톡만 억제돼요 (브라우저 알림/소리는 그대로 울립니다).</div>
+          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+            <span style="min-width:120px;">⏳ 동일 아이템 재알림 간격</span>
+            <input type="number" id="kakaoItemCooldownMinInput" value="30" min="0" step="5" style="width:70px;" onchange="saveKakaoItemCooldown()">
+            <span>분</span>
+          </div>
+          <div class="hint" style="margin:0;">한 아이템에 카톡이 한 번 가면, 이 시간 동안은 같은 아이템으로 조건이 다시 맞아도 카톡을 또 보내지 않아요 (0으로 두면 매번 전송). 브라우저 알림/소리는 이 설정과 무관하게 항상 울려요.</div>
           <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
             <button class="ghost" id="kakaoHistoryToggleBtn" onclick="toggleKakaoHistory()">📜 알림 이력 보기</button>
             <span class="hint" id="kakaoQuotaHint" style="margin:0;"></span>
@@ -449,6 +458,7 @@ const LS_KEYS = {
   autoInterval: 'ggMarket.autoInterval',
   maType: 'ggMarket.maType',
   extraApiKeys: 'ggMarket.extraApiKeys',
+  kakaoItemCooldownMin: 'ggMarket.kakaoItemCooldownMin',
 };
 
 // 카카오 "나에게 보내기"는 기본 앱 기준 1일 호출 횟수 제한이 있다(보통 100회).
@@ -570,6 +580,8 @@ function loadStateFromStorage() {
     if (savedQuietStart) document.getElementById('quietStart').value = savedQuietStart;
     const savedQuietEnd = localStorage.getItem(LS_KEYS.quietEnd);
     if (savedQuietEnd) document.getElementById('quietEnd').value = savedQuietEnd;
+    const savedCooldownMin = localStorage.getItem(LS_KEYS.kakaoItemCooldownMin);
+    if (savedCooldownMin) document.getElementById('kakaoItemCooldownMinInput').value = savedCooldownMin;
     renderKakaoQuotaHint();
     renderKakaoHistory();
 
@@ -679,7 +691,69 @@ document.getElementById('fallbackToggle').addEventListener('click', () => {
 
 document.getElementById('loadBtn').addEventListener('click', () => run());
 document.getElementById('loadBtnTop').addEventListener('click', () => run());
-document.getElementById('itemName').addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+document.getElementById('itemName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { hideItemSuggestions(); run(); } if (e.key === 'Escape') hideItemSuggestions(); });
+
+// 아이템 이름을 타이핑하는 동안, 잠깐 멈추면(디바운스) 매칭되는 아이템들을 미리 검색해서
+// 드롭다운으로 보여준다. "영혼석"만 쳐도 파동의 영혼석/야생의 영혼석 등이 밑에 뜨는 식.
+// 매 키 입력마다 부르면 API 호출이 너무 잦아지니 450ms 정도 멈췄을 때만 실제로 검색한다.
+let itemSuggestTimer = null;
+document.getElementById('itemName').addEventListener('input', () => {
+  const q = document.getElementById('itemName').value.trim();
+  if (itemSuggestTimer) clearTimeout(itemSuggestTimer);
+  if (!q) { hideItemSuggestions(); return; }
+  itemSuggestTimer = setTimeout(() => fetchItemSuggestions(q), 450);
+});
+
+async function fetchItemSuggestions(query) {
+  const apiKeyVal = document.getElementById('apiKey').value.trim();
+  if (!apiKeyVal) return; // 키 없으면 어차피 실패할 요청이라 조용히 스킵
+  try {
+    const res = await apiFetch(`${BASE_URL}/market/items?search=${encodeURIComponent(query)}&limit=8`, { headers: headers() });
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = data.data || [];
+    // 사용자가 결과 오는 동안 입력을 계속 바꿨을 수 있으니, 지금 입력값과 다르면 무시(오래된 응답 버림)
+    if (document.getElementById('itemName').value.trim() !== query) return;
+    renderItemSuggestions(list, query);
+  } catch (e) { /* 자동완성 실패는 조용히 무시 — 조회 버튼으로 여전히 검색 가능 */ }
+}
+
+function renderItemSuggestions(list, query) {
+  const box = document.getElementById('itemSuggestions');
+  if (!list.length) { hideItemSuggestions(); return; }
+  box.innerHTML = list.map(it => {
+    const name = it.name || '';
+    // 검색어와 일치하는 부분을 굵게 강조
+    const idx = name.toLowerCase().indexOf(query.toLowerCase());
+    const highlighted = idx === -1 ? name
+      : `${name.slice(0, idx)}<b style="color:var(--accent);">${name.slice(idx, idx + query.length)}</b>${name.slice(idx + query.length)}`;
+    return `<li data-kind-id="${it.kind_id}" data-name="${name.replace(/"/g, '&quot;')}"
+              style="padding:7px 10px; cursor:pointer; border-radius:6px; font-size:14px;"
+              onmouseover="this.style.background='var(--line)'" onmouseout="this.style.background='transparent'"
+              onclick="pickItemSuggestion(${it.kind_id}, this.dataset.name)">${highlighted}</li>`;
+  }).join('');
+  box.style.display = 'block';
+}
+
+function hideItemSuggestions() {
+  const box = document.getElementById('itemSuggestions');
+  box.style.display = 'none';
+  box.innerHTML = '';
+}
+
+// 드롭다운에서 하나 고르면, 이미 kind_id를 알고 있으니 이름 재검색 없이 바로 조회로 넘어간다.
+function pickItemSuggestion(kindId, name) {
+  document.getElementById('itemName').value = name;
+  hideItemSuggestions();
+  run();
+}
+
+// 바깥 클릭하면 드롭다운 닫기
+document.addEventListener('click', (e) => {
+  const box = document.getElementById('itemSuggestions');
+  const input = document.getElementById('itemName');
+  if (box && !box.contains(e.target) && e.target !== input) hideItemSuggestions();
+});
 document.getElementById('pasteBtn').addEventListener('click', () => runFromPaste());
 document.getElementById('autoBtn').addEventListener('click', toggleAuto);
 document.getElementById('apiKey').addEventListener('change', saveApiKeyToStorage);
@@ -1678,20 +1752,29 @@ function drawCandles(rawPoints, min, max) {
   // 흔들리는 HMA로 잡아뒀다. "HMA+TEMA 동시"를 고르면 큰 흐름(HMA)과 실시간 타이밍(TEMA)을
   // 색을 다르게 해서 같이 보여준다 — 두 선이 갈라지는 지점(크로스)이 그 자체로 신호가 된다.
   const maType = document.getElementById('maTypeSel').value;
-  const MA_COLORS = { hma: '#facc15', tema: '#22d3ee' }; // HMA=노랑, TEMA=시안
+  const MA_COLORS = { hma: '#5B9BD5', tema: '#facc15' }; // HMA=스카이블루, TEMA=노랑
   const MA_LABELS_TO_DRAW = maType === 'both' ? ['hma', 'tema'] : (maType !== 'none' ? [maType] : []);
   if (MA_LABELS_TO_DRAW.length && n >= 2) {
     const maPeriod = Math.min(3, n);
     const closes = points.map(p => p.close);
-    MA_LABELS_TO_DRAW.forEach((t, idx) => {
+    const maLines = MA_LABELS_TO_DRAW.map(t => {
       const maValues = computeMA(closes, maPeriod, t);
-      if (!maValues) return;
-      const color = MA_COLORS[t];
-      const maLinePts = maValues.map((v, i) => `${x(i)},${y(v)}`).join(' ');
-      // 얇은 어두운 외곽선으로 배경과 최소한의 대비만 주고, 선 자체는 너무 두껍지 않게 —
-      // 예전엔 너무 안 보였고, 그 다음엔 너무 두꺼워서 캔들을 덮어버렸어서 중간값을 잡음.
-      svg += `<polyline points="${maLinePts}" fill="none" stroke="#000000" stroke-width="3" opacity="0.3" stroke-linejoin="round" stroke-linecap="round"/>`;
-      svg += `<polyline points="${maLinePts}" fill="none" stroke="${color}" stroke-width="1.3" opacity="0.6" stroke-linejoin="round" stroke-linecap="round"/>`;
+      return maValues ? { type: t, color: MA_COLORS[t], pts: maValues.map((v, i) => `${x(i)},${y(v)}`).join(' ') } : null;
+    }).filter(Boolean);
+
+    // 두 선(HMA/TEMA)을 같이 그릴 땐 기간이 둘 다 짧아서 거의 붙어 다니는 구간이 많다. 나중에
+    // 그리는 선이 먼저 그린 선을 완전히 덮어버리는 걸 막기 위해, HMA는 굵게(테두리처럼) 먼저 깔고
+    // TEMA는 얇게 그 위에 그린다 — 겹쳐도 HMA 색이 항상 양옆으로 살짝 삐져나와 보인다.
+    const isBoth = maLines.length > 1;
+    maLines.forEach(({ type: t, pts }) => {
+      const haloW = isBoth ? (t === 'hma' ? 5.5 : 3) : 4;
+      svg += `<polyline points="${pts}" fill="none" stroke="#000000" stroke-width="${haloW}" opacity="0.6" stroke-linejoin="round" stroke-linecap="round"/>`;
+    });
+    maLines.forEach(({ type: t, color, pts }) => {
+      const lineW = isBoth ? (t === 'hma' ? 4 : 1.8) : 2.5;
+      svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${lineW}" opacity="0.9" stroke-linejoin="round" stroke-linecap="round"/>`;
+    });
+    maLines.forEach(({ type: t, color }, idx) => {
       const label = `— ${t.toUpperCase()}(${maPeriod})`;
       const labelY = padT + 4 + idx * 18;
       svg += `<rect x="${padL + 2}" y="${labelY}" width="${label.length * 6.5 + 12}" height="16" rx="3" fill="#000000" opacity="0.3"/>`;
@@ -2336,6 +2419,11 @@ function saveQuietHours() {
   } catch (e) {}
 }
 
+function saveKakaoItemCooldown() {
+  const v = document.getElementById('kakaoItemCooldownMinInput').value;
+  localStorage.setItem(LS_KEYS.kakaoItemCooldownMin, v);
+}
+
 // 오늘(KST) 카카오 전송 횟수를 세어 대략적인 남은 호출 가능 횟수를 보여준다. 카카오 공식 실시간 잔여량 API가
 // 따로 없어서 클라이언트에서 자체 카운트한 값이며, 참고용 추정치임을 안내에 명시한다.
 function bumpKakaoQuota() {
@@ -2377,7 +2465,7 @@ function renderKakaoHistory(list) {
   if (!panel) return;
   const data = list || JSON.parse(localStorage.getItem(LS_KEYS.kakaoHistory) || '[]');
   if (!data.length) { panel.innerHTML = '<div class="hint" style="margin:0;">아직 이력이 없어요.</div>'; return; }
-  const statusLabel = { sent: '✅ 전송됨', failed: '⚠️ 실패', 'skipped-quiet': '🌙 조용한 시간대라 건너뜀' };
+  const statusLabel = { sent: '✅ 전송됨', failed: '⚠️ 실패', 'skipped-quiet': '🌙 조용한 시간대라 건너뜀', 'skipped-cooldown': '⏳ 동일 아이템 쿨다운' };
   panel.innerHTML = data.map(h => {
     const t = new Date(h.ts + 0); // ts는 로컬 절대시각(ms)이라 그대로 toLocaleString 사용
     const timeStr = t.toLocaleString('ko-KR', { hour12: false });
@@ -2452,17 +2540,37 @@ async function sendKakaoMemo(title, body, opts) {
 // --- 배칭: 짧은 시간 안에 여러 알림이 뜨면 카톡 호출 하나로 묶어서 보낸다(호출 횟수 절약 + 스팸 방지) ---
 // 1) 디바운스: 새 알림이 들어올 때마다 대기시간을 살짝 늘려서, 연달아 계속 조건을 만족하는
 //    변동장에서도 여러 알림이 최대한 한 번에 묶이게 한다 (단, 무한정 미루진 않도록 상한을 둠).
-// 2) 쿨다운: 배칭과 별개로, 실제 카톡 전송 사이 최소 간격을 둬서 "카톡이 너무 많이 온다"는
+// 2) 쿨다운(전체): 배칭과 별개로, 실제 카톡 전송 사이 최소 간격을 둬서 "카톡이 너무 많이 온다"는
 //    느낌 자체를 줄인다.
+// 3) 쿨다운(아이템별): 어차피 알림 한 번 오면 바로 대처하고 끝인 경우가 많아서, 같은 아이템은
+//    한 번 카톡이 간 뒤 일정 시간(기본 30분) 동안은 그 항목으로 또 조건이 맞아도 카톡을 재전송하지
+//    않는다. 브라우저 알림/소리는 이 쿨다운과 무관하게 매번 그대로 울린다 — 카톡만 억제.
 let kakaoQueue = [];
 let kakaoFlushTimer = null;
 let kakaoBatchStartedAt = null;
 let lastKakaoSendAt = 0;
+let kakaoItemCooldownUntil = {}; // { [kindId]: timestamp } — 이 시각까지는 이 아이템으로 카톡 재전송 안 함
 const KAKAO_BATCH_WINDOW_MS = 15000;   // 알림이 새로 들어올 때마다 이만큼 더 기다렸다가 묶어 보냄
 const KAKAO_MAX_BATCH_WAIT_MS = 45000; // 계속 들어와도 최대 이 시간까지만 기다림
-const KAKAO_MIN_SEND_GAP_MS = 30000;   // 실제 카톡 전송 사이 최소 간격(쿨다운)
+const KAKAO_MIN_SEND_GAP_MS = 30000;   // 실제 카톡 전송 사이 최소 간격(전체 쿨다운)
+
+function kakaoItemCooldownMs() {
+  const min = Number(localStorage.getItem(LS_KEYS.kakaoItemCooldownMin));
+  return (min > 0 ? min : 30) * 60 * 1000; // 기본 30분
+}
 
 function queueKakaoAlert(kindId, title, body, itemName) {
+  if (kindId !== null && kindId !== undefined) {
+    const until = kakaoItemCooldownUntil[kindId] || 0;
+    if (Date.now() < until) {
+      // 이 아이템은 최근에 이미 카톡이 갔음 — 브라우저 알림/소리는 notifyPriceAlert에서 이미
+      // 울렸으니, 여기서는 카톡만 조용히 건너뛴다.
+      logKakaoHistory({ status: 'skipped-cooldown', itemName, text: `${title}\n${body}`, detail: '동일 아이템 재알림 쿨다운 중' });
+      return;
+    }
+    kakaoItemCooldownUntil[kindId] = Date.now() + kakaoItemCooldownMs();
+  }
+
   kakaoQueue.push({ kindId, title, body, itemName });
   const now = Date.now();
   if (!kakaoBatchStartedAt) kakaoBatchStartedAt = now;

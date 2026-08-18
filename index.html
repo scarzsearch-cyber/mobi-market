@@ -557,23 +557,29 @@ function importSettings(file) {
   reader.readAsText(file);
 }
 
+// 이 함수는 여러 단계로 나눠서 각각 따로 try/catch로 감싼다. 예전엔 전체를 하나의 try로 묶어놔서,
+// 중간 어느 한 단계(예: 카카오 SDK 초기화, API 키 풀 계산)에서 에러가 하나만 나도 그 뒤에 있던
+// 감시 목록/알림 복원 코드까지 통째로 건너뛰어버리는 버그가 있었다 — 그래서 창을 껐다 켜면
+// 감시 목록이 통째로 사라진 것처럼 보였던 것. 이제는 한 단계가 실패해도 나머지는 정상 복원된다.
 function loadStateFromStorage() {
   try {
     const savedKey = localStorage.getItem(LS_KEYS.apiKey);
     if (savedKey) document.getElementById('apiKey').value = savedKey;
-
     const el = document.getElementById('redirectUriHint');
     if (el) el.textContent = kakaoRedirectUri();
+  } catch (e) { console.error('[복원 실패] API 키/Redirect URI', e); }
 
+  try {
     const savedKakaoKey = localStorage.getItem(LS_KEYS.kakaoJsKey);
     if (savedKakaoKey) document.getElementById('kakaoJsKey').value = savedKakaoKey;
     const savedRestKey = localStorage.getItem(LS_KEYS.kakaoRestKey);
     if (savedRestKey) document.getElementById('kakaoRestKey').value = savedRestKey;
     if (savedKakaoKey && window.Kakao) initKakao(); // 로그인 자체는 리다이렉트가 필요해 자동으로는 못 하고, 키 초기화까지만 미리 해둔다
-
     handleKakaoRedirectIfAny(); // 카카오 로그인 후 이 페이지로 돌아온 상태(?code=...)면 여기서 토큰 교환까지 마무리
     updateBrowserNotifyStatus();
+  } catch (e) { console.error('[복원 실패] 카카오 설정', e); }
 
+  try {
     const savedQuietEnabled = localStorage.getItem(LS_KEYS.quietEnabled);
     document.getElementById('quietEnabled').checked = !!savedQuietEnabled;
     const savedQuietStart = localStorage.getItem(LS_KEYS.quietStart);
@@ -584,23 +590,28 @@ function loadStateFromStorage() {
     if (savedCooldownMin) document.getElementById('kakaoItemCooldownMinInput').value = savedCooldownMin;
     renderKakaoQuotaHint();
     renderKakaoHistory();
+  } catch (e) { console.error('[복원 실패] 조용한 시간대/카카오 이력', e); }
 
+  try {
     const savedInterval = localStorage.getItem(LS_KEYS.autoInterval);
     if (savedInterval) document.getElementById('autoIntervalSel').value = savedInterval;
-
     const savedMaType = localStorage.getItem(LS_KEYS.maType);
     if (savedMaType) document.getElementById('maTypeSel').value = savedMaType;
-
     const savedExtraKeys = localStorage.getItem(LS_KEYS.extraApiKeys);
     if (savedExtraKeys) document.getElementById('extraApiKeys').value = savedExtraKeys;
     renderApiKeyPoolHint();
+  } catch (e) { console.error('[복원 실패] 자동갱신/이평선/API 키 로테이션 설정', e); }
 
+  try {
     const savedItem = localStorage.getItem(LS_KEYS.lastItem);
     if (savedItem) document.getElementById('itemName').value = savedItem;
-
     const savedDays = localStorage.getItem(LS_KEYS.days);
     if (savedDays) document.getElementById('daysSel').value = savedDays;
+  } catch (e) { console.error('[복원 실패] 마지막 검색어/기간', e); }
 
+  // ── 여기부터는 감시 목록/알림 — 이 앱의 핵심 데이터라 가장 중요하다. 위쪽 어느 단계가
+  // 실패했더라도 이 블록은 항상 독립적으로 실행된다.
+  try {
     const savedAlerts = localStorage.getItem(LS_KEYS.alerts);
     if (savedAlerts) {
       alertsByKind = JSON.parse(savedAlerts) || {};
@@ -608,7 +619,9 @@ function loadStateFromStorage() {
       Object.values(alertsByKind).forEach(list => list.forEach(a => { if (a.id > maxId) maxId = a.id; }));
       alertIdSeq = maxId + 1;
     }
+  } catch (e) { console.error('[복원 실패] 알림 설정', e); }
 
+  try {
     const savedWatch = localStorage.getItem(LS_KEYS.watchList);
     if (savedWatch) {
       const slim = JSON.parse(savedWatch) || [];
@@ -618,13 +631,15 @@ function loadStateFromStorage() {
         newListingThreshold: w.newListingThreshold || 1,
       }));
     }
+  } catch (e) { console.error('[복원 실패] 감시 목록', e); }
 
+  try {
     const savedFocus = localStorage.getItem(LS_KEYS.focus);
     if (savedFocus && watchList.some(w => w.kind_id === Number(savedFocus))) {
       focusKindId = Number(savedFocus);
       startFocusTimer();
     }
-  } catch (e) { /* 저장된 값이 깨져 있어도 그냥 빈 상태로 시작 */ }
+  } catch (e) { console.error('[복원 실패] 집중 감시', e); }
 }
 
 // 표시용 봉 단위 정의: 원본 해상도별로 몇 개씩 묶어 보여줄지.
@@ -769,6 +784,15 @@ document.getElementById('zoomResetBtn').addEventListener('click', resetZoom);
 // 새로고침(F5)해도 API 키·감시 목록·알림·마지막 검색 상태가 남아있도록 먼저 복원한다.
 loadStateFromStorage();
 renderWatchList();
+
+// 카카오 로그인은 페이지를 통째로 떠났다가 돌아오는 방식이고, 창을 닫을 때도 마찬가지로
+// 스크립트가 갑자기 멈춘다. 평소엔 감시 목록이 바뀔 때마다 바로바로 저장되긴 하지만, 혹시
+// 모를 타이밍 문제(저장이 막 끝나기 직전에 페이지가 떠나는 경우 등)에 대비해 페이지를 떠나기
+// 직전에 한 번 더 강제로 저장해서 감시 목록이 사라지는 일이 없게 한다.
+window.addEventListener('beforeunload', () => {
+  saveWatchStateToStorage();
+  saveSearchStateToStorage();
+});
 
 // 페이지를 열면 저장된 마지막 검색어(없으면 기본값 파동의 영혼석)를 자동 조회하고,
 // 감시 목록도 함께 최신화한다. API 키가 비어있으면 에러부터 띄우지 않고 안내만 한다.
@@ -1050,8 +1074,21 @@ async function run() {
     if (list.length === 0) { setHint(`'${name}' 검색 결과 없음`, true); return; }
 
     const target = name.replace(/\s/g,'').toLowerCase();
-    let picked = list.find(i => i.name === name)
-              || list.find(i => (i.name||'').replace(/\s/g,'').toLowerCase() === target)
+    const exactMatch = list.find(i => i.name === name)
+                     || list.find(i => (i.name||'').replace(/\s/g,'').toLowerCase() === target);
+
+    // 정확히 하나로 특정되는 이름이면(예: 자동완성에서 골랐거나, 전체 이름을 그대로 입력한 경우)
+    // 예전처럼 그 아이템 하나만 조회한다. 반면 "영혼석"처럼 여러 개에 걸쳐 매칭되는 애매한
+    // 검색어로 그냥 엔터를 친 거라면, 어느 하나를 임의로 골라버리지 않고 매칭되는 아이템
+    // 전부를 감시 목록에 한 번에 추가한다 — 뭐가 있는지 목록에서 직접 보고 고를 수 있게.
+    if (!exactMatch && list.length > 1) {
+      list.forEach(it => ensureWatchListHasItem(it));
+      saveSearchStateToStorage();
+      setHint(`'${name}' 관련 아이템 ${list.length}개를 감시 목록에 모두 추가했습니다.`);
+      return;
+    }
+
+    let picked = exactMatch
               || list.find(i => (i.name||'').replace(/\s/g,'').toLowerCase().includes(target))
               || list[0];
 
@@ -1752,7 +1789,7 @@ function drawCandles(rawPoints, min, max) {
   // 흔들리는 HMA로 잡아뒀다. "HMA+TEMA 동시"를 고르면 큰 흐름(HMA)과 실시간 타이밍(TEMA)을
   // 색을 다르게 해서 같이 보여준다 — 두 선이 갈라지는 지점(크로스)이 그 자체로 신호가 된다.
   const maType = document.getElementById('maTypeSel').value;
-  const MA_COLORS = { hma: '#5B9BD5', tema: '#facc15' }; // HMA=스카이블루, TEMA=노랑
+  const MA_COLORS = { hma: '#38BDF8', tema: '#facc15' }; // HMA=스카이블루, TEMA=노랑
   const MA_LABELS_TO_DRAW = maType === 'both' ? ['hma', 'tema'] : (maType !== 'none' ? [maType] : []);
   if (MA_LABELS_TO_DRAW.length && n >= 2) {
     const maPeriod = Math.min(3, n);
@@ -1771,7 +1808,7 @@ function drawCandles(rawPoints, min, max) {
       svg += `<polyline points="${pts}" fill="none" stroke="#000000" stroke-width="${haloW}" opacity="0.6" stroke-linejoin="round" stroke-linecap="round"/>`;
     });
     maLines.forEach(({ type: t, color, pts }) => {
-      const lineW = isBoth ? (t === 'hma' ? 4 : 1.8) : 2.5;
+      const lineW = isBoth ? (t === 'hma' ? 4.8 : 2.6) : 2.5;
       svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${lineW}" opacity="0.9" stroke-linejoin="round" stroke-linecap="round"/>`;
     });
     maLines.forEach(({ type: t, color }, idx) => {
@@ -2169,12 +2206,12 @@ function renderAlertPanelHtml(kindId) {
   const itemsHtml = list.length
     ? list.map(a => {
         const kindLabel = a.type === 'trailing'
-          ? `고점 대비 ${a.pct}% 하락${a.peakPrice ? ` · 현재 고점 ${Math.round(a.peakPrice).toLocaleString()}` : ''}`
+          ? `🎯 고점 대비 ${a.pct}% 하락${a.peakPrice ? ` · 현재 고점 ${Math.round(a.peakPrice).toLocaleString()}` : ''}`
           : a.type === 'trend_reversal'
           ? `📐 TEMA ${DIR_LABEL[a.direction] || '추세 전환'}`
-          : `${a.price.toLocaleString()} ${a.dir === 'above' ? '이상' : '이하'}`;
+          : `💰 ${a.price.toLocaleString()} ${a.dir === 'above' ? '이상' : '이하'}`;
         const marginLabel = (a.type === 'threshold' && a.marginPct)
-          ? `<span class="note" style="color:var(--accent, #3b82f6);">여유폭 ±${a.marginPct}%</span>`
+          ? `<span class="note" style="color:var(--accent, #3b82f6); font-weight:700;">🎚 여유폭 ±${a.marginPct}%</span>`
           : (a.type === 'threshold' ? `<span class="note" style="color:var(--dim);">여유폭 없음</span>` : '');
         return `
         <li class="alert-item${a.fired ? ' fired' : ''}">
@@ -2218,7 +2255,7 @@ function renderAlertPanelHtml(kindId) {
         <button class="ghost" onclick="addTrendReversalAlert(${kindId})">추세전환 추가</button>
       </div>
       <div class="watch-alert-subform">
-        <span>재발동 여유폭 ±</span>
+        <span>🎚 재발동 여유폭 ±</span>
         <input type="number" id="ap_margin_${kindId}" placeholder="0" min="0" step="0.1" style="width:60px;">
         <span>% (경계선 근처에서 알림이 반복되는 게 싫으면 설정 — 가격/평균 알림에만 적용)</span>
       </div>

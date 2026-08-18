@@ -297,6 +297,27 @@
           </div>
           <div class="hint" style="margin:0;">감시 목록·알림 설정·조용한 시간대 등을 파일로 저장해뒀다가, 브라우저를 바꾸거나 캐시가 날아갔을 때 불러올 수 있어요. (API 키·카카오 로그인 정보는 보안상 포함되지 않아요 — 새 기기에선 직접 입력해주세요.)</div>
           <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+            <span style="min-width:120px;">🎨 이평선 스타일</span>
+          </div>
+          <div class="watch-alert-subform">
+            <span style="min-width:70px;">HMA 두께</span>
+            <input type="number" id="maStyleHmaWidth" value="4" min="0.5" step="0.1" style="width:60px;" onchange="saveMaStyle()">
+            <span style="min-width:70px;">TEMA 두께</span>
+            <input type="number" id="maStyleTemaWidth" value="2.6" min="0.5" step="0.1" style="width:60px;" onchange="saveMaStyle()">
+          </div>
+          <div class="watch-alert-subform">
+            <span style="min-width:70px;">선 명암</span>
+            <input type="number" id="maStyleLineOpacity" value="0.9" min="0.1" max="1" step="0.05" style="width:60px;" onchange="saveMaStyle()">
+            <span class="hint" style="margin:0;">(0=투명 ~ 1=불투명, HMA/TEMA 공통)</span>
+          </div>
+          <div class="watch-alert-subform">
+            <span style="min-width:70px;">HALO 두께</span>
+            <input type="number" id="maStyleHaloWidth" value="4" min="0" step="0.5" style="width:60px;" onchange="saveMaStyle()">
+            <span style="min-width:70px;">HALO 명암</span>
+            <input type="number" id="maStyleHaloOpacity" value="0.6" min="0" max="1" step="0.05" style="width:60px;" onchange="saveMaStyle()">
+          </div>
+          <div class="hint" style="margin:0;">HALO는 이평선 뒤에 깔리는 검은 외곽선이에요 (0으로 두면 외곽선 없이 선만 나와요). 값 바꾸면 차트에 바로 반영돼요.</div>
+          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
             <span style="min-width:120px;">🔁 API 키 로테이션</span>
             <button type="button" class="ghost key-eye" onclick="toggleExtraKeysVisibility(this)" title="키 보이기/가리기">👁</button>
           </div>
@@ -325,6 +346,7 @@
     </details>
   </div>
 
+  <div class="hint" id="statsRowScopeLabel" style="margin:0 0 4px;"></div>
   <div class="stats stats-top" id="statsRow" style="display:none;">
     <div class="stat"><div class="label">최저</div><div class="value" id="stMin">—</div></div>
     <div class="stat"><div class="label">최고</div><div class="value" id="stMax">—</div></div>
@@ -425,6 +447,7 @@ let alertsByKind = {}; // { [kind_id]: [{id, price, dir:'above'|'below', fired}]
 let alertIdSeq = 1;
 let titleFlashTimer = null;
 let watchList = []; // [{kind_id, name, price, soldOut, count, newListingAlert, newListingThreshold}] — 동시 감시 목록
+let apiKeyPoolCache = null; // API 키 로테이션 풀 캐시 — loadStateFromStorage()보다 먼저 선언돼야 함 (TDZ 방지)
 let focusKindId = null;   // "집중 감시" 중인 kind_id — 이 아이템만 더 빠른 주기로 갱신
 let focusTimer = null;
 const FOCUS_INTERVAL_MS = 15000; // 30회/분 한도 안에서 안전하게 잡은 집중 감시 주기(15초)
@@ -457,6 +480,7 @@ const LS_KEYS = {
   kakaoQuotaDate: 'ggMarket.kakaoQuotaDate',
   autoInterval: 'ggMarket.autoInterval',
   maType: 'ggMarket.maType',
+  maStyle: 'ggMarket.maStyle',
   extraApiKeys: 'ggMarket.extraApiKeys',
   kakaoItemCooldownMin: 'ggMarket.kakaoItemCooldownMin',
 };
@@ -597,6 +621,12 @@ function loadStateFromStorage() {
     if (savedInterval) document.getElementById('autoIntervalSel').value = savedInterval;
     const savedMaType = localStorage.getItem(LS_KEYS.maType);
     if (savedMaType) document.getElementById('maTypeSel').value = savedMaType;
+    const style = getMaStyle();
+    document.getElementById('maStyleHmaWidth').value = style.hmaWidth;
+    document.getElementById('maStyleTemaWidth').value = style.temaWidth;
+    document.getElementById('maStyleLineOpacity').value = style.lineOpacity;
+    document.getElementById('maStyleHaloWidth').value = style.haloWidth;
+    document.getElementById('maStyleHaloOpacity').value = style.haloOpacity;
     const savedExtraKeys = localStorage.getItem(LS_KEYS.extraApiKeys);
     if (savedExtraKeys) document.getElementById('extraApiKeys').value = savedExtraKeys;
     renderApiKeyPoolHint();
@@ -891,7 +921,6 @@ function saveExtraApiKeys() {
 // 위쪽 기본 API 키 + 로테이션용 추가 키들을 합쳐서, 중복/빈 값을 뺀 실제 사용 가능한 키 목록을 만든다.
 // apiFetch 큐가 매 요청마다(많으면 분당 수십 번) 이 목록을 조회하기 때문에, 매번 textarea를 다시
 // 파싱하지 않도록 캐시해두고 실제로 키가 바뀌었을 때만(invalidateApiKeyPoolCache) 다시 계산한다.
-let apiKeyPoolCache = null;
 function invalidateApiKeyPoolCache() { apiKeyPoolCache = null; }
 function getApiKeyPool() {
   if (apiKeyPoolCache) return apiKeyPoolCache;
@@ -1217,17 +1246,7 @@ function render(item, histData) {
   const { closes, min, max, avg, cur, changePct, devPct, pct } = computeStats(points);
 
   document.getElementById('statsRow').style.display = 'grid';
-  document.getElementById('stMin').textContent = min.toLocaleString();
-  document.getElementById('stMax').textContent = max.toLocaleString();
-  document.getElementById('stAvg').textContent = avg.toFixed(1);
-  document.getElementById('stCur').textContent = cur.toLocaleString();
-
-  const pctEl = document.getElementById('stPct');
-  pctEl.textContent = `상위 ${100 - pct}%`;
-
-  const devEl = document.getElementById('stDev');
-  devEl.textContent = `${devPct >= 0 ? '+' : ''}${devPct.toFixed(1)}%`;
-  devEl.style.color = devPct >= 0 ? 'var(--up)' : 'var(--down)';
+  updateStatsRow({ min, max, avg, cur, pct, devPct }, null);
   checkPriceAlerts(item.kind_id, cur, item.name); // 스냅샷이 아직 안 왔거나 실패했을 때를 대비한 1차 검사(캔들 종가 기준)
 
   // 전체 조회 기간 기준 분석 컨텍스트 — 확대(zoomRange) 안 했을 때 renderChartForSelection이 이걸 사용
@@ -1533,11 +1552,29 @@ function renderChartForSelection() {
     const zoomCtx = { ...zoomStats, resolution: baseResolution, scopeLabel: '지금 확대한 구간' };
     lastAnalysisCtx = zoomCtx;
     renderAnalysis(zoomCtx);
+    updateStatsRow(zoomStats, '지금 확대한 구간');
   } else if (fullAnalysisCtx) {
     lastAnalysisCtx = fullAnalysisCtx;
     renderAnalysis(fullAnalysisCtx);
+    updateStatsRow(fullAnalysisCtx, null);
   }
   drawCandles(agg, min, max);
+}
+
+// 위쪽 "최저/최고/평균/현재" 통계칸을 채운다. scopeLabel이 있으면(=드래그로 확대한 상태) 그 구간
+// 기준으로, 없으면 전체 조회 기간(1/7/30/90일) 기준으로 채우고 라벨로 구분해준다.
+function updateStatsRow({ min, max, avg, cur, pct, devPct }, scopeLabel) {
+  document.getElementById('stMin').textContent = min.toLocaleString();
+  document.getElementById('stMax').textContent = max.toLocaleString();
+  document.getElementById('stAvg').textContent = avg.toFixed(1);
+  document.getElementById('stCur').textContent = cur.toLocaleString();
+  document.getElementById('stPct').textContent = `상위 ${100 - pct}%`;
+  const devEl = document.getElementById('stDev');
+  devEl.textContent = `${devPct >= 0 ? '+' : ''}${devPct.toFixed(1)}%`;
+  devEl.style.color = devPct >= 0 ? 'var(--up)' : 'var(--down)';
+
+  const labelEl = document.getElementById('statsRowScopeLabel');
+  if (labelEl) labelEl.textContent = scopeLabel ? `📍 ${scopeLabel} 기준` : '📅 전체 조회 기간 기준';
 }
 
 // ---- 이동평균선 계산 함수들 ----
@@ -1616,6 +1653,26 @@ function computeMA(closes, period, type) {
 function saveMaPref() {
   localStorage.setItem(LS_KEYS.maType, document.getElementById('maTypeSel').value);
   if (basePoints.length) renderChartForSelection();
+}
+
+function saveMaStyle() {
+  const style = {
+    hmaWidth: parseFloat(document.getElementById('maStyleHmaWidth').value) || 4,
+    temaWidth: parseFloat(document.getElementById('maStyleTemaWidth').value) || 2.6,
+    lineOpacity: parseFloat(document.getElementById('maStyleLineOpacity').value) || 0.9,
+    haloWidth: parseFloat(document.getElementById('maStyleHaloWidth').value) ?? 4,
+    haloOpacity: parseFloat(document.getElementById('maStyleHaloOpacity').value) ?? 0.6,
+  };
+  localStorage.setItem(LS_KEYS.maStyle, JSON.stringify(style));
+  if (basePoints.length) renderChartForSelection();
+}
+
+function getMaStyle() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_KEYS.maStyle) || 'null');
+    if (saved) return saved;
+  } catch (e) {}
+  return { hmaWidth: 4, temaWidth: 2.6, lineOpacity: 0.9, haloWidth: 4, haloOpacity: 0.6 };
 }
 
 function drawCandles(rawPoints, min, max) {
@@ -1802,14 +1859,16 @@ function drawCandles(rawPoints, min, max) {
     // 두 선(HMA/TEMA)을 같이 그릴 땐 기간이 둘 다 짧아서 거의 붙어 다니는 구간이 많다. 나중에
     // 그리는 선이 먼저 그린 선을 완전히 덮어버리는 걸 막기 위해, HMA는 굵게(테두리처럼) 먼저 깔고
     // TEMA는 얇게 그 위에 그린다 — 겹쳐도 HMA 색이 항상 양옆으로 살짝 삐져나와 보인다.
-    const isBoth = maLines.length > 1;
+    // 두께/명암은 "⚙️ 설정 → 이평선 스타일"에서 사용자가 직접 조절할 수 있다.
+    const style = getMaStyle();
+    const widthOf = (t) => t === 'hma' ? style.hmaWidth : style.temaWidth;
     maLines.forEach(({ type: t, pts }) => {
-      const haloW = isBoth ? (t === 'hma' ? 5.5 : 3) : 4;
-      svg += `<polyline points="${pts}" fill="none" stroke="#000000" stroke-width="${haloW}" opacity="0.6" stroke-linejoin="round" stroke-linecap="round"/>`;
+      if (style.haloWidth > 0) {
+        svg += `<polyline points="${pts}" fill="none" stroke="#000000" stroke-width="${style.haloWidth}" opacity="${style.haloOpacity}" stroke-linejoin="round" stroke-linecap="round"/>`;
+      }
     });
     maLines.forEach(({ type: t, color, pts }) => {
-      const lineW = isBoth ? (t === 'hma' ? 4.8 : 2.6) : 2.5;
-      svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${lineW}" opacity="0.9" stroke-linejoin="round" stroke-linecap="round"/>`;
+      svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${widthOf(t)}" opacity="${style.lineOpacity}" stroke-linejoin="round" stroke-linecap="round"/>`;
     });
     maLines.forEach(({ type: t, color }, idx) => {
       const label = `— ${t.toUpperCase()}(${maPeriod})`;
@@ -2993,6 +3052,7 @@ async function refreshWatchItem(w) {
     w.soldOut = found.is_sold_out;
     w.price = found.is_sold_out ? null : found.min_price;
     w.count = found.total_count;
+    w.countChange24h = found.count_change_24h; // 감시 목록에 24h 수량 변동률을 같이 보여주기 위해 저장
     w.lastUpdated = Date.now();
     if (!found.is_sold_out) checkPriceAlerts(w.kind_id, w.price, w.name);
 
@@ -3014,6 +3074,7 @@ async function refreshWatchItem(w) {
     const staleCache = !cacheNow || (Date.now() - cacheNow.ts) > 5 * 60 * 1000;
     if (isVisibleOrFocused || staleCache) {
       await refreshChartCacheForItem(w.kind_id, w.name);
+      patchWatchItemDisplay(w.kind_id); // 방금 받아온 시세이력으로 24h 최저/최고 범위도 바로 반영
     }
   } catch (e) { /* 실패해도 조용히 유지(이전 값 표시) */ }
 }
@@ -3085,6 +3146,24 @@ function tickWatchTimes() {
 }
 setInterval(tickWatchTimes, 1000);
 
+// 감시 목록에 24시간 최저/최고가를 보여주기 위해, 캐시된 시세이력에서 최근 24시간에 해당하는
+// 구간만 뽑아 계산한다. 해당 아이템의 이력을 아직 한 번도 안 불러왔으면 null을 반환 — 이 경우
+// 감시 목록엔 "—"로 표시되고, 이력이 캐시되는 순간(조회/자동갱신 등) 자동으로 채워진다.
+function compute24hRange(kindId) {
+  const kindCache = historyCacheByKind[kindId];
+  if (!kindCache) return null;
+  const days = document.getElementById('daysSel').value;
+  const entry = kindCache[days] || Object.values(kindCache)[0];
+  if (!entry || !entry.histData || !entry.histData.points) return null;
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const recent = entry.histData.points.filter(p => p.time && new Date(p.time).getTime() >= cutoff);
+  if (!recent.length) return null;
+  const highs = recent.map(p => p.high ?? p.close).filter(v => v !== null && v !== undefined);
+  const lows = recent.map(p => p.low ?? p.close).filter(v => v !== null && v !== undefined);
+  if (!highs.length || !lows.length) return null;
+  return { low: Math.min(...lows), high: Math.max(...highs) };
+}
+
 // 감시 목록 전체를 다시 그리지 않고, 가격/수량/갱신시각처럼 자주 바뀌는 텍스트만 살짝 바꿔치기한다.
 // 전체 재렌더링(renderWatchList)은 입력 중이던 알림 설정 폼까지 통째로 날려버려서, 백그라운드
 // 갱신처럼 자주 도는 곳에서는 이 가벼운 패치 함수를 대신 쓴다.
@@ -3094,9 +3173,25 @@ function patchWatchItemDisplay(kindId) {
   const priceEl = document.getElementById(`wPrice_${kindId}`);
   const countEl = document.getElementById(`wCount_${kindId}`);
   const updatedEl = document.getElementById(`wUpdated_${kindId}`);
+  const rangeEl = document.getElementById(`wRange24h_${kindId}`);
+  const countChgEl = document.getElementById(`wCountChg24h_${kindId}`);
   if (priceEl) priceEl.textContent = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '조회 중…');
   if (countEl) countEl.textContent = w.count !== null ? w.count.toLocaleString() + '개' : '—';
   if (updatedEl) updatedEl.textContent = timeAgoText(w.lastUpdated);
+  if (rangeEl) {
+    const range = compute24hRange(kindId);
+    rangeEl.textContent = range ? `24h ${range.low.toLocaleString()} ~ ${range.high.toLocaleString()}` : '24h —';
+  }
+  if (countChgEl) {
+    const v = w.countChange24h;
+    if (v === null || v === undefined) {
+      countChgEl.textContent = '수량 24h —';
+      countChgEl.style.color = 'var(--dim)';
+    } else {
+      countChgEl.textContent = `수량 24h ${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+      countChgEl.style.color = v >= 0 ? 'var(--up)' : 'var(--down)';
+    }
+  }
 }
 
 function renderWatchList() {
@@ -3115,6 +3210,11 @@ function renderWatchList() {
     const priceTxt = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '조회 중…');
     const countTxt = w.count !== null ? w.count.toLocaleString() + '개' : '—';
     const isFocus = focusKindId === w.kind_id;
+    const range24h = compute24hRange(w.kind_id);
+    const rangeTxt = range24h ? `24h ${range24h.low.toLocaleString()} ~ ${range24h.high.toLocaleString()}` : '24h —';
+    const ccVal = w.countChange24h;
+    const countChgTxt = (ccVal === null || ccVal === undefined) ? '수량 24h —' : `수량 24h ${ccVal >= 0 ? '+' : ''}${ccVal.toFixed(1)}%`;
+    const countChgColor = (ccVal === null || ccVal === undefined) ? 'var(--dim)' : (ccVal >= 0 ? 'var(--up)' : 'var(--down)');
     return `
       <div class="watch-item-wrap">
         <div class="watch-item">
@@ -3128,6 +3228,10 @@ function renderWatchList() {
           ${w.newListingAlert ? `<input type="number" min="1" step="1" value="${w.newListingThreshold || 1}" style="width:52px;" title="최소 몇 개 이상 늘어야 알림을 울릴지" onchange="setNewListingThreshold(${w.kind_id}, this.value)"><span style="color:var(--dim); font-size:12px;">개↑</span>` : ''}
           <button class="ghost" onclick="toggleAlertPanel(${w.kind_id})">알림${alerts.length ? ` (${alerts.length})` : ''}</button>
           <button class="ghost" onclick="removeWatchItem(${w.kind_id})">삭제</button>
+        </div>
+        <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
+          <span id="wRange24h_${w.kind_id}">${rangeTxt}</span>
+          <span id="wCountChg24h_${w.kind_id}" style="color:${countChgColor};">${countChgTxt}</span>
         </div>
         ${w.alertPanelOpen ? renderAlertPanelHtml(w.kind_id) : ''}
       </div>`;

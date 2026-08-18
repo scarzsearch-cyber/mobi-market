@@ -3031,7 +3031,7 @@ function switchToWatchItem(kindId) {
   // 감시 목록 클릭 = "이 아이템을 보고 싶다"는 명확한 의사표시이므로, 조회 버튼을 따로 안 눌러도
   // 그래프와 스냅샷(등록 수량/변동률)을 자동으로 최신화한다. 요청은 apiFetch 큐를 거치므로
   // 다른 백그라운드 갱신과 겹쳐도 안전하게 순서대로 처리된다.
-  refreshChartCacheForItem(kindId, w.name);
+  refreshChartCacheForItem(kindId, w.name).then(() => patchWatchItemDisplay(kindId));
   fetchSnapshot(picked).catch((err) => {
     note.style.display = 'block';
     note.textContent = err.message.includes('429')

@@ -103,6 +103,7 @@
   .watch-item-toggles{display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:0 10px 8px;}
   .watch-item-toggles button{padding:3px 7px; font-size:11.5px;}
   .watch-item-toggles input[type=number]{width:52px; padding:3px 6px; font-size:11.5px;}
+  .watch-item-toggles select{padding:3px 4px; font-size:11.5px;}
   .w-valuation{font-weight:700; padding:1px 6px; border-radius:4px; background:var(--panel);}
   .w-deplete{color:var(--down); font-weight:700; white-space:nowrap;}
   .watch-item-wrap{display:flex; flex-direction:column; gap:6px;}
@@ -282,6 +283,12 @@
             <span>분</span>
           </div>
           <div class="hint" style="margin:0;">한 아이템에 카톡이 한 번 가면, 이 시간 동안은 같은 아이템으로 조건이 다시 맞아도 카톡을 또 보내지 않아요 (0으로 두면 매번 전송). 브라우저 알림/소리는 이 설정과 무관하게 항상 울려요.</div>
+          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+            <span style="min-width:120px;">🎯 종합 스코어 필터</span>
+            <input type="number" id="kakaoMinAbsScoreInput" value="0" min="0" max="100" step="5" style="width:70px;" onchange="saveKakaoMinAbsScore()">
+            <span>이상일 때만 카톡</span>
+          </div>
+          <div class="hint" style="margin:0;">개별 알림이 울려도 감시목록의 종합 신호 스코어(절대값)가 이 값보다 작으면 카톡은 건너뛰어요 (0=필터 안 함, 전부 전송). 진짜 중요한 신호만 폰으로 받고 싶을 때 올려보세요 — 역시 브라우저 알림/소리는 항상 그대로 울립니다.</div>
           <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
             <button class="ghost" id="kakaoHistoryToggleBtn" onclick="toggleKakaoHistory()">📜 알림 이력 보기</button>
             <span class="hint" id="kakaoQuotaHint" style="margin:0;"></span>
@@ -488,14 +495,16 @@ let titleFlashTimer = null;
 let watchList = []; // [{kind_id, name, price, soldOut, count, newListingAlert, newListingThreshold, lowestPriceAlert, highestPriceAlert, listingDropAlert, depletionEtaMin, pct1h, pct24h, pct7d}] — 동시 감시 목록
 let watchSortMode = 'default'; // 'default' | 'valuation' | 'price' — 감시 목록 표시 정렬 방식
 let countHistoryByKind = {}; // { [kind_id]: [{count, ts}, ...] } — 매물 소진 속도 계산용 최근 수량 이력 (최대 6개)
+let priceHistoryByKind = {}; // { [kind_id]: [{price, ts}, ...] } — 단기 추세 예측(선형회귀)용 최근 가격 이력 (최대 8개)
 let pendingAlertEvals = []; // [{id, kindId, itemName, alertLabel, direction:'buy'|'sell', priceAtFire, firedAt, evalAt}] — 적중률 판정 대기 중인 알림들
 let alertOutcomeLog = []; // [{ts, kindId, itemName, alertLabel, direction, priceAtFire, priceAfter, success}] — 판정 완료된 알림 이력 (최근 200건)
 const ALERT_EVAL_WINDOW_MS = 30 * 60000; // 알림이 울리고 30분 뒤 가격을 다시 확인해서 적중 여부를 판정
 const ALERT_OUTCOME_LOG_MAX = 200;
 let apiKeyPoolCache = null; // API 키 로테이션 풀 캐시 — loadStateFromStorage()보다 먼저 선언돼야 함 (TDZ 방지)
-let focusKindId = null;   // "집중 감시" 중인 kind_id — 이 아이템만 더 빠른 주기로 갱신
+let focusKindIds = new Set();   // "집중 감시" 중인 kind_id 집합 — 이 아이템들만 더 빠른 주기로 갱신 (최대 FOCUS_MAX_ITEMS개)
 let focusTimer = null;
-const FOCUS_INTERVAL_MS = 15000; // 30회/분 한도 안에서 안전하게 잡은 집중 감시 주기(15초)
+const FOCUS_INTERVAL_MS = 15000; // 안전 한도 안에서 잡은 집중 감시 주기(15초) — 아이템이 여러 개면 한 주기 안에서 순서대로 갱신되므로 요청 큐가 알아서 속도를 맞춘다
+const FOCUS_MAX_ITEMS = 3; // 동시에 집중 감시할 수 있는 최대 아이템 수 — 너무 많아지면 요청 한도에 계속 걸리므로 제한
 let zoomRange = null; // {t1, t2} — 드래그로 확대한 시간 구간 (밀리초 타임스탬프). null이면 전체 구간 표시
 let zoomStack = [];   // 이전 확대 단계들 (null도 포함 가능 = "전체 구간이었음"). '한 단계 뒤로'용
 let lastSnapshot = null;     // 실시간 매물 스냅샷 (등록 수량, 1h/24h/7d 변동) — 종합 판단에 반영
@@ -528,6 +537,7 @@ const LS_KEYS = {
   maStyle: 'ggMarket.maStyle',
   extraApiKeys: 'ggMarket.extraApiKeys',
   kakaoItemCooldownMin: 'ggMarket.kakaoItemCooldownMin',
+  kakaoMinAbsScore: 'ggMarket.kakaoMinAbsScore',
   watchSort: 'ggMarket.watchSort',
   alertOutcomeLog: 'ggMarket.alertOutcomeLog',
   pendingAlertEvals: 'ggMarket.pendingAlertEvals',
@@ -560,7 +570,9 @@ function slimWatchItem(w) {
     kind_id: w.kind_id, name: w.name,
     newListingAlert: !!w.newListingAlert, newListingThreshold: w.newListingThreshold || 1,
     lowestPriceAlert: !!w.lowestPriceAlert, lowestPriceThresholdPct: w.lowestPriceThresholdPct || 0,
+    lowestPriceConfirm: w.lowestPriceConfirm || 1,
     highestPriceAlert: !!w.highestPriceAlert, highestPriceThresholdPct: w.highestPriceThresholdPct || 0,
+    highestPriceConfirm: w.highestPriceConfirm || 1,
     listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
   };
 }
@@ -572,7 +584,9 @@ function restoreWatchItem(w) {
     lastUpdated: null, alertPanelOpen: false,
     newListingAlert: !!w.newListingAlert, newListingThreshold: w.newListingThreshold || 1,
     lowestPriceAlert: !!w.lowestPriceAlert, lowestPriceThresholdPct: w.lowestPriceThresholdPct || 0,
+    lowestPriceConfirm: w.lowestPriceConfirm || 1,
     highestPriceAlert: !!w.highestPriceAlert, highestPriceThresholdPct: w.highestPriceThresholdPct || 0,
+    highestPriceConfirm: w.highestPriceConfirm || 1,
     listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
     depletionEtaMin: null,
   };
@@ -585,7 +599,7 @@ function saveWatchStateToStorage() {
     const slim = watchList.map(slimWatchItem);
     localStorage.setItem(LS_KEYS.watchList, JSON.stringify(slim));
     localStorage.setItem(LS_KEYS.alerts, JSON.stringify(alertsByKind));
-    localStorage.setItem(LS_KEYS.focus, focusKindId === null ? '' : String(focusKindId));
+    localStorage.setItem(LS_KEYS.focus, JSON.stringify(Array.from(focusKindIds)));
   } catch (e) {}
 }
 
@@ -597,7 +611,7 @@ function exportSettings() {
     version: 1,
     watchList: watchList.map(slimWatchItem),
     alertsByKind,
-    focusKindId,
+    focusKindIds: Array.from(focusKindIds),
     days: document.getElementById('daysSel').value,
     quiet: {
       enabled: document.getElementById('quietEnabled').checked,
@@ -629,7 +643,10 @@ function importSettings(file) {
       watchList = data.watchList.map(restoreWatchItem);
       alertsByKind = data.alertsByKind || {};
       Object.values(alertsByKind).flat().forEach(a => { if (a.id >= alertIdSeq) alertIdSeq = a.id + 1; });
-      focusKindId = (data.focusKindId === undefined) ? null : data.focusKindId;
+      // focusKindIds(배열)가 있으면 그걸 쓰고, 예전 백업 파일(단일 focusKindId)이면 하나짜리 배열로 변환
+      if (Array.isArray(data.focusKindIds)) focusKindIds = new Set(data.focusKindIds.slice(0, FOCUS_MAX_ITEMS));
+      else if (data.focusKindId !== undefined && data.focusKindId !== null) focusKindIds = new Set([data.focusKindId]);
+      else focusKindIds = new Set();
 
       if (data.days) document.getElementById('daysSel').value = data.days;
       if (data.quiet) {
@@ -644,6 +661,7 @@ function importSettings(file) {
       saveSearchStateToStorage();
       renderWatchList();
       refreshWatchList();
+      if (focusKindIds.size) startFocusTimer();
       setHint(`✅ 감시 목록 ${watchList.length}개를 불러왔습니다.`);
     } catch (e) {
       setHint('⚠️ 파일을 읽지 못했습니다 — 이 앱에서 내보낸 JSON 파일이 맞는지 확인해주세요.', true);
@@ -685,6 +703,8 @@ function loadStateFromStorage() {
     if (savedQuietEnd) document.getElementById('quietEnd').value = savedQuietEnd;
     const savedCooldownMin = localStorage.getItem(LS_KEYS.kakaoItemCooldownMin);
     if (savedCooldownMin) document.getElementById('kakaoItemCooldownMinInput').value = savedCooldownMin;
+    const savedMinScore = localStorage.getItem(LS_KEYS.kakaoMinAbsScore);
+    if (savedMinScore) document.getElementById('kakaoMinAbsScoreInput').value = savedMinScore;
     renderKakaoQuotaHint();
     renderKakaoHistory();
   } catch (e) { console.error('[복원 실패] 조용한 시간대/카카오 이력', e); }
@@ -749,9 +769,16 @@ function loadStateFromStorage() {
 
   try {
     const savedFocus = localStorage.getItem(LS_KEYS.focus);
-    if (savedFocus && watchList.some(w => w.kind_id === Number(savedFocus))) {
-      focusKindId = Number(savedFocus);
-      startFocusTimer();
+    if (savedFocus) {
+      let ids;
+      try { ids = JSON.parse(savedFocus); } catch (e2) { ids = null; }
+      // 예전 버전은 단일 kind_id 문자열로 저장했었다 — 배열이 아니면 그 형식으로 간주하고 변환
+      if (!Array.isArray(ids)) ids = savedFocus ? [Number(savedFocus)] : [];
+      const validIds = ids.filter(id => watchList.some(w => w.kind_id === id)).slice(0, FOCUS_MAX_ITEMS);
+      if (validIds.length) {
+        focusKindIds = new Set(validIds);
+        startFocusTimer();
+      }
     }
   } catch (e) { console.error('[복원 실패] 집중 감시', e); }
 }
@@ -2612,6 +2639,16 @@ function saveKakaoItemCooldown() {
   localStorage.setItem(LS_KEYS.kakaoItemCooldownMin, v);
 }
 
+// 종합 스코어(computeSignalScore)의 절대값이 이 값보다 작으면 카톡 전송을 건너뛴다.
+function saveKakaoMinAbsScore() {
+  const v = document.getElementById('kakaoMinAbsScoreInput').value;
+  localStorage.setItem(LS_KEYS.kakaoMinAbsScore, v);
+}
+function getKakaoMinAbsScore() {
+  const v = Number(localStorage.getItem(LS_KEYS.kakaoMinAbsScore));
+  return (!v || v < 0) ? 0 : v;
+}
+
 // 오늘(KST) 카카오 전송 횟수를 세어 대략적인 남은 호출 가능 횟수를 보여준다. 카카오 공식 실시간 잔여량 API가
 // 따로 없어서 클라이언트에서 자체 카운트한 값이며, 참고용 추정치임을 안내에 명시한다.
 function bumpKakaoQuota() {
@@ -2653,7 +2690,7 @@ function renderKakaoHistory(list) {
   if (!panel) return;
   const data = list || JSON.parse(localStorage.getItem(LS_KEYS.kakaoHistory) || '[]');
   if (!data.length) { panel.innerHTML = '<div class="hint" style="margin:0;">아직 이력이 없어요.</div>'; return; }
-  const statusLabel = { sent: '✅ 전송됨', failed: '⚠️ 실패', 'skipped-quiet': '🌙 조용한 시간대라 건너뜀', 'skipped-cooldown': '⏳ 동일 아이템 쿨다운' };
+  const statusLabel = { sent: '✅ 전송됨', failed: '⚠️ 실패', 'skipped-quiet': '🌙 조용한 시간대라 건너뜀', 'skipped-cooldown': '⏳ 동일 아이템 쿨다운', 'skipped-lowscore': '🎯 종합 스코어 필터에 걸림' };
   panel.innerHTML = data.map(h => {
     const t = new Date(h.ts + 0); // ts는 로컬 절대시각(ms)이라 그대로 toLocaleString 사용
     const timeStr = t.toLocaleString('ko-KR', { hour12: false });
@@ -2748,6 +2785,18 @@ function kakaoItemCooldownMs() {
 }
 
 function queueKakaoAlert(kindId, title, body, itemName) {
+  // 종합 스코어 필터 — 설정값보다 신호가 약하면 카톡은 건너뛴다 (브라우저 알림/소리는 이미 울렸음).
+  // kindId가 없는 경우(테스트 알림 등)나 그 아이템 신호를 계산할 데이터가 없으면 필터를 적용하지 않는다.
+  const minAbsScore = getKakaoMinAbsScore();
+  if (minAbsScore > 0 && kindId !== null && kindId !== undefined) {
+    const w = watchList.find(x => x.kind_id === kindId);
+    const score = w ? computeSignalScore(w) : null;
+    if (score !== null && Math.abs(score) < minAbsScore) {
+      logKakaoHistory({ status: 'skipped-lowscore', itemName, text: `${title}\n${body}`, detail: `종합 스코어 ${score} (필터 기준 ±${minAbsScore})` });
+      return;
+    }
+  }
+
   if (kindId !== null && kindId !== undefined) {
     const until = kakaoItemCooldownUntil[kindId] || 0;
     if (Date.now() < until) {
@@ -2895,6 +2944,36 @@ function computeDepletionEtaMin(kindId, currentCount) {
   const rate = (oldest.count - newest.count) / elapsedMin; // 개/분, 양수면 감소 중
   if (rate <= 0.05 || currentCount <= 0) return null;
   return currentCount / rate;
+}
+
+// ---- 단기 추세 예측 (다음 N분 예상가) ----
+// 확정적인 예측이 아니라, "최근 짧은 추세를 그대로 연장하면 대략 이 정도"라는 참고치일 뿐이다.
+// 최근 가격 이력에 단순 선형회귀를 돌려 기울기를 구하고, 그 기울기를 N분만큼 밀어서 투영한다.
+const PRICE_HISTORY_MAX = 8;
+function pushPriceHistory(kindId, price, ts) {
+  const arr = priceHistoryByKind[kindId] || (priceHistoryByKind[kindId] = []);
+  arr.push({ price, ts });
+  while (arr.length > PRICE_HISTORY_MAX) arr.shift();
+  return arr;
+}
+
+function computeProjectedPrice(kindId, minutesAhead) {
+  const arr = priceHistoryByKind[kindId];
+  if (!arr || arr.length < 3) return null;
+  const t0 = arr[0].ts;
+  const xs = arr.map(p => (p.ts - t0) / 60000); // 경과 시간(분)
+  const ys = arr.map(p => p.price);
+  const n = xs.length;
+  const sumX = xs.reduce((a, b) => a + b, 0), sumY = ys.reduce((a, b) => a + b, 0);
+  const sumXY = xs.reduce((a, x, i) => a + x * ys[i], 0);
+  const sumXX = xs.reduce((a, x) => a + x * x, 0);
+  const denom = (n * sumXX - sumX * sumX);
+  if (!denom) return null; // 모든 시점이 동일(짧은 구간 중복)이면 회귀선을 못 그림
+  const slope = (n * sumXY - sumX * sumY) / denom; // 가격 변화/분
+  const intercept = (sumY - slope * sumX) / n;
+  const lastX = xs[xs.length - 1];
+  const projected = intercept + slope * (lastX + minutesAhead);
+  return { projected: Math.max(0, projected), slopePerMin: slope };
 }
 
 // ---- 알림 적중률 되돌아보기 ----
@@ -3102,26 +3181,37 @@ function flashTabTitle(label = '🔔 가격 알림!') {
   }, 700);
 }
 
-// ---- 집중 감시: 지정한 아이템 하나만 더 빠른 주기(FOCUS_INTERVAL_MS)로 갱신 ----
-// 전체 감시 목록을 다 빠르게 돌리면 분당 요청 한도를 금방 넘기므로, "지금 다투는 아이템 하나"만
-// 골라 집중적으로 갱신하는 절충안. 다른 아이템/전체 자동갱신 주기는 그대로 유지된다.
+// ---- 집중 감시: 지정한 아이템들만 더 빠른 주기(FOCUS_INTERVAL_MS)로 갱신 ----
+// 전체 감시 목록을 다 빠르게 돌리면 분당 요청 한도를 금방 넘기므로, "지금 다투는 아이템 몇 개"만
+// 골라 집중적으로 갱신하는 절충안. 최대 FOCUS_MAX_ITEMS개까지 동시에 설정할 수 있고, 한 주기 안에서
+// 순서대로 갱신하므로(요청 큐가 알아서 속도 조절) 개수가 늘어도 요청이 한꺼번에 몰리지 않는다.
+// 다른 아이템/전체 자동갱신 주기는 그대로 유지된다.
 function toggleFocusWatch(kindId) {
-  if (focusKindId === kindId) {
-    focusKindId = null;
-    stopFocusTimer();
+  if (focusKindIds.has(kindId)) {
+    focusKindIds.delete(kindId);
+    if (!focusKindIds.size) stopFocusTimer();
   } else {
-    focusKindId = kindId;
+    if (focusKindIds.size >= FOCUS_MAX_ITEMS) {
+      setHint(`집중 감시는 최대 ${FOCUS_MAX_ITEMS}개까지만 동시에 설정할 수 있어요 — 다른 아이템을 먼저 해제해주세요.`, true);
+      return;
+    }
+    focusKindIds.add(kindId);
     startFocusTimer();
   }
+  saveWatchStateToStorage();
   renderWatchList();
 }
 
 function startFocusTimer() {
   stopFocusTimer();
   const tick = async () => {
-    const w = watchList.find(x => x.kind_id === focusKindId);
-    // refreshWatchItem 안에서 스냅샷 갱신 + 차트 캐시 갱신(+지금 보고 있으면 재렌더링)까지 처리한다.
-    if (w) await refreshWatchItem(w);
+    // 여러 아이템이면 한 주기 안에서 순서대로 갱신 — apiFetch 큐가 알아서 속도를 맞춰주므로
+    // 여기서 병렬로 쏘지 않고 순차적으로 await해서 순간적으로 요청이 몰리는 걸 방지한다.
+    for (const kindId of Array.from(focusKindIds)) {
+      const w = watchList.find(x => x.kind_id === kindId);
+      // refreshWatchItem 안에서 스냅샷 갱신 + 차트 캐시 갱신(+지금 보고 있으면 재렌더링)까지 처리한다.
+      if (w) await refreshWatchItem(w);
+    }
     focusTimer = setTimeout(tick, FOCUS_INTERVAL_MS);
   };
   tick();
@@ -3164,6 +3254,17 @@ function setLowestPriceThreshold(kindId, val) {
   saveWatchStateToStorage();
 }
 
+// 최저가 하락 알림의 "연속 확인" 횟수 — 1이면 즉시(기존과 동일), 2 이상이면 그만큼 연속으로
+// 같은 방향 변화가 관측돼야 알림이 울려서 순간적인 스파이크성 매물로 인한 오탐을 줄인다.
+function setLowestPriceConfirm(kindId, val) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const n = parseInt(val, 10);
+  w.lowestPriceConfirm = (!n || n < 1) ? 1 : n;
+  w._lowStreak = 0; // 설정이 바뀌면 진행 중이던 카운트는 리셋
+  saveWatchStateToStorage();
+}
+
 // 최저가 상승(⬆ 팔 타이밍) 알림 켜기/끄기
 function toggleHighestPriceAlert(kindId) {
   const w = watchList.find(x => x.kind_id === kindId);
@@ -3178,6 +3279,16 @@ function setHighestPriceThreshold(kindId, val) {
   if (!w) return;
   const n = parseFloat(val);
   w.highestPriceThresholdPct = (!n || n < 0) ? 0 : n;
+  saveWatchStateToStorage();
+}
+
+// 최저가 상승 알림의 "연속 확인" 횟수 (위 lowestPriceConfirm과 대칭)
+function setHighestPriceConfirm(kindId, val) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const n = parseInt(val, 10);
+  w.highestPriceConfirm = (!n || n < 1) ? 1 : n;
+  w._highStreak = 0;
   saveWatchStateToStorage();
 }
 
@@ -3344,12 +3455,13 @@ function ensureWatchListHasItem(picked) {
 
 function removeWatchItem(kindId) {
   watchList = watchList.filter(w => w.kind_id !== kindId);
-  if (focusKindId === kindId) { focusKindId = null; stopFocusTimer(); }
+  if (focusKindIds.has(kindId)) { focusKindIds.delete(kindId); if (!focusKindIds.size) stopFocusTimer(); }
   // 감시 해제한 아이템의 알림 설정/TEMA 버퍼도 같이 정리 — 안 그러면 목록에서 지워도
   // 메모리랑 저장된 설정(백업 파일 포함)에 계속 고아 상태로 남아있게 된다.
   delete alertsByKind[kindId];
   delete recentClosesByKind[kindId];
   delete countHistoryByKind[kindId];
+  delete priceHistoryByKind[kindId];
   renderWatchList();
 }
 
@@ -3438,18 +3550,43 @@ async function refreshWatchItem(w) {
 
     // 최저가 하락/상승 알림 — 품절이었다가 매물이 생기거나, 매물이 있다가 품절되는 경우는
     // "가격 변동"이 아니라 "상태 변화"라 비교 대상이 아니므로 양쪽 다 품절이 아닐 때만 비교한다.
+    // 순간적인 스파이크성 매물 하나 때문에 오탐이 나는 걸 줄이기 위해, 설정된 "연속 확인" 횟수만큼
+    // 같은 방향의 변화가 반복돼야만 실제로 알림을 울린다(기본값 1 = 즉시 알림, 기존과 동일 동작).
     if (!prevSoldOut && !found.is_sold_out && prevPrice !== null && prevPrice !== undefined && w.price !== null) {
       const pctDelta = ((w.price - prevPrice) / prevPrice) * 100;
-      if (w.lowestPriceAlert && pctDelta < 0 && Math.abs(pctDelta) >= (w.lowestPriceThresholdPct || 0)) {
-        notifyLowestPriceAlert(w, prevPrice, w.price, Math.abs(pctDelta));
-      } else if (w.highestPriceAlert && pctDelta > 0 && pctDelta >= (w.highestPriceThresholdPct || 0)) {
-        notifyHighestPriceAlert(w, prevPrice, w.price, pctDelta);
+      const isDrop = pctDelta < 0 && Math.abs(pctDelta) >= (w.lowestPriceThresholdPct || 0);
+      const isRise = pctDelta > 0 && pctDelta >= (w.highestPriceThresholdPct || 0);
+
+      if (w.lowestPriceAlert) {
+        if (isDrop) {
+          w._lowStreak = (w._lowStreak || 0) + 1;
+          if (w._lowStreak >= (w.lowestPriceConfirm || 1)) {
+            notifyLowestPriceAlert(w, prevPrice, w.price, Math.abs(pctDelta));
+            w._lowStreak = 0;
+          }
+        } else {
+          w._lowStreak = 0;
+        }
+      }
+      if (w.highestPriceAlert) {
+        if (isRise) {
+          w._highStreak = (w._highStreak || 0) + 1;
+          if (w._highStreak >= (w.highestPriceConfirm || 1)) {
+            notifyHighestPriceAlert(w, prevPrice, w.price, pctDelta);
+            w._highStreak = 0;
+          }
+        } else {
+          w._highStreak = 0;
+        }
       }
     }
 
     // 매물 소진 속도 — 최근 수량 이력을 쌓아두고, 지금 속도로 줄어들면 몇 분 뒤 품절인지 추정한다.
     pushCountHistory(w.kind_id, found.total_count, w.lastUpdated);
     w.depletionEtaMin = computeDepletionEtaMin(w.kind_id, found.total_count);
+
+    // 단기 추세 예측용 — 품절이 아닐 때만 가격 이력을 쌓는다 (품절=null 값이 껴들면 회귀선이 왜곡됨)
+    if (!found.is_sold_out) pushPriceHistory(w.kind_id, w.price, w.lastUpdated);
 
     patchWatchItemDisplay(w.kind_id); // 가격/수량/갱신시각만 가볍게 텍스트 교체 (알림 발동으로 배지가 바뀌는 경우는 checkPriceAlerts가 이미 전체 재렌더링을 처리함)
 
@@ -3459,7 +3596,7 @@ async function refreshWatchItem(w) {
     // 나머지 백그라운드 아이템은 캐시가 5분 이상 오래됐을 때만 갱신한다.
     const daysNow = document.getElementById('daysSel').value;
     const cacheNow = (historyCacheByKind[w.kind_id] || {})[daysNow];
-    const isVisibleOrFocused = (w.kind_id === lastKindId) || (w.kind_id === focusKindId);
+    const isVisibleOrFocused = (w.kind_id === lastKindId) || focusKindIds.has(w.kind_id);
     const staleCache = !cacheNow || (Date.now() - cacheNow.ts) > 5 * 60 * 1000;
     if (isVisibleOrFocused || staleCache) {
       await refreshChartCacheForItem(w.kind_id, w.name);
@@ -3498,7 +3635,7 @@ function refreshWatchList() {
     return;
   }
 
-  const priority = watchList.filter(w => w.kind_id === lastKindId || w.kind_id === focusKindId);
+  const priority = watchList.filter(w => w.kind_id === lastKindId || focusKindIds.has(w.kind_id));
   const priorityIds = new Set(priority.map(w => w.kind_id));
   const rest = watchList.filter(w => !priorityIds.has(w.kind_id));
 
@@ -3630,12 +3767,26 @@ function computeSignalBadge(w) {
   const score = computeSignalScore(w);
   if (score === null) return null;
   let label, color;
-  if (score >= 40) { label = '🟢 강한매수'; color = 'var(--up)'; }
-  else if (score >= 15) { label = '🟢 매수우위'; color = 'var(--up)'; }
-  else if (score <= -40) { label = '🔴 강한매도'; color = 'var(--down)'; }
-  else if (score <= -15) { label = '🔴 매도우위'; color = 'var(--down)'; }
+  // "매수우위/매도우위"처럼 "누가 우세한가"로 읽히는 표현은 "매수세가 강해서 오히려 가격이
+  // 오른다"는 정반대 의미로도 읽힐 수 있어 혼동을 준다. 그래서 "지금 사기/팔기 좋다"처럼
+  // 행동을 직접 가리키는 문구로 명확히 한다.
+  if (score >= 40) { label = '🟢 지금 사기 좋음'; color = 'var(--up)'; }
+  else if (score >= 15) { label = '🟢 사기 좋은 편'; color = 'var(--up)'; }
+  else if (score <= -40) { label = '🔴 지금 팔기 좋음'; color = 'var(--down)'; }
+  else if (score <= -15) { label = '🔴 팔기 좋은 편'; color = 'var(--down)'; }
   else { label = '⚪ 중립'; color = 'var(--dim)'; }
   return { score, text: `${label} ${score >= 0 ? '+' : ''}${score}`, color };
+}
+
+// 단기 추세 예측(다음 15분 예상가) 배지 텍스트 — computeProjectedPrice가 데이터 부족으로
+// null을 반환하면(가격 이력이 3개 미만) 배지 자체를 숨긴다.
+function computeProjectedBadgeText(w) {
+  const info = computeProjectedPrice(w.kind_id, 15);
+  if (!info) return null;
+  return {
+    text: `예상(15분) ${Math.round(info.projected).toLocaleString()}`,
+    color: info.slopePerMin >= 0 ? 'var(--up)' : 'var(--down)',
+  };
 }
 
 // ---- 변동성 기반 동적 임계값 추천 ----
@@ -3710,6 +3861,7 @@ function patchWatchItemDisplay(kindId) {
   const signalEl = document.getElementById(`wSignal_${kindId}`);
   const devEl = document.getElementById(`wDevPct_${kindId}`);
   const depleteEl = document.getElementById(`wDeplete_${kindId}`);
+  const projEl = document.getElementById(`wProjected_${kindId}`);
   if (priceEl) priceEl.textContent = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '조회 중…');
   if (countEl) countEl.textContent = w.count !== null ? w.count.toLocaleString() + '개' : '—';
   if (updatedEl) updatedEl.textContent = timeAgoText(w.lastUpdated);
@@ -3746,6 +3898,11 @@ function patchWatchItemDisplay(kindId) {
     depleteEl.textContent = txt || '';
     depleteEl.style.display = txt ? 'inline-block' : 'none';
   }
+  if (projEl) {
+    const proj = computeProjectedBadgeText(w);
+    projEl.textContent = proj ? proj.text : '예상(15분) —';
+    projEl.style.color = proj ? proj.color : 'var(--dim)';
+  }
 }
 
 function renderWatchList() {
@@ -3763,7 +3920,7 @@ function renderWatchList() {
     const firedCount = alerts.filter(a => a.fired).length;
     const priceTxt = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '조회 중…');
     const countTxt = w.count !== null ? w.count.toLocaleString() + '개' : '—';
-    const isFocus = focusKindId === w.kind_id;
+    const isFocus = focusKindIds.has(w.kind_id);
     const range24h = compute24hRange(w.kind_id);
     const rangeTxt = range24h ? `24h ${range24h.low.toLocaleString()} ~ ${range24h.high.toLocaleString()}` : '24h —';
     const range1h = compute1hRange(w.kind_id);
@@ -3775,19 +3932,21 @@ function renderWatchList() {
     const valuationBadge = computeValuationBadge(w);
     const devTxt = valuationBadge ? `평균대비 ${valuationBadge.text}` : '평균대비 —';
     const depleteBadgeTxt = computeDepletionBadgeText(w);
+    const projBadge = computeProjectedBadgeText(w);
     const suggestedPct = computeSuggestedThresholdPct(w.kind_id);
     const suggestedTitle = suggestedPct !== null ? `변동성 기반 추천값: ${suggestedPct}%` : '추천값을 계산하려면 먼저 [조회]로 시세이력을 불러오세요';
+    const confirmOptions = (selected) => [1, 2, 3].map(n => `<option value="${n}"${n === (selected || 1) ? ' selected' : ''}>${n}회</option>`).join('');
     return `
       <div class="watch-item-wrap">
         <div class="watch-item">
           <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${w.name}</span>
           <span class="w-price" id="wPrice_${w.kind_id}">${priceTxt}</span>
-          <span class="w-valuation" id="wSignal_${w.kind_id}" title="여러 지표를 합친 참고용 점수(확정 신호 아님)" style="color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
+          <span class="w-valuation" id="wSignal_${w.kind_id}" title="여러 지표를 합친 참고용 점수 — 양수(초록)=사기 좋음, 음수(빨강)=팔기 좋음. 확정 신호는 아님" style="color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
           <span class="w-count" id="wCount_${w.kind_id}">${countTxt}</span>
           <span class="w-updated" id="wUpdated_${w.kind_id}">${timeAgoText(w.lastUpdated)}</span>
           <span class="w-deplete" id="wDeplete_${w.kind_id}" style="display:${depleteBadgeTxt ? 'inline-block' : 'none'};">${depleteBadgeTxt || ''}</span>
           ${firedCount ? `<span class="alert-hit">🔔 ${firedCount}</span>` : ''}
-          <button class="ghost${isFocus ? ' toggle-on' : ''}" onclick="toggleFocusWatch(${w.kind_id})" title="집중 감시 — 이 아이템만 ${FOCUS_INTERVAL_MS / 1000}초마다 갱신">🎯${isFocus ? ' 집중감시중' : ''}</button>
+          <button class="ghost${isFocus ? ' toggle-on' : ''}" onclick="toggleFocusWatch(${w.kind_id})" title="집중 감시 — 최대 ${FOCUS_MAX_ITEMS}개까지 동시에 ${FOCUS_INTERVAL_MS / 1000}초마다 갱신 (현재 ${focusKindIds.size}/${FOCUS_MAX_ITEMS})">🎯${isFocus ? ' 집중감시중' : ''}</button>
           <button class="ghost" onclick="toggleAlertPanel(${w.kind_id})">알림${alerts.length ? ` (${alerts.length})` : ''}</button>
           <button class="ghost" onclick="removeWatchItem(${w.kind_id})">삭제</button>
         </div>
@@ -3796,14 +3955,15 @@ function renderWatchList() {
           <span id="wRange24h_${w.kind_id}">${rangeTxt}</span>
           <span id="wCountChg24h_${w.kind_id}" style="color:${countChgColor};">${countChgTxt}</span>
           <span id="wDevPct_${w.kind_id}">${devTxt}</span>
+          <span id="wProjected_${w.kind_id}" title="최근 짧은 추세를 단순 연장한 참고치일 뿐, 실제 가격을 보장하지 않아요" style="color:${projBadge ? projBadge.color : 'var(--dim)'};">${projBadge ? projBadge.text : '예상(15분) —'}</span>
         </div>
         <div class="watch-item-toggles">
           <button class="ghost${w.newListingAlert ? ' toggle-on listing' : ''}" onclick="toggleNewListingAlert(${w.kind_id})" title="매물 수량이 늘면(=신규 등록) 알림">🆕 신규매물${w.newListingAlert ? ' 감지중' : ''}</button>
           ${w.newListingAlert ? `<input type="number" min="1" step="1" value="${w.newListingThreshold || 1}" title="최소 몇 개 이상 늘어야 알림을 울릴지" onchange="setNewListingThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">개↑</span>` : ''}
           <button class="ghost${w.lowestPriceAlert ? ' toggle-on lowprice' : ''}" onclick="toggleLowestPriceAlert(${w.kind_id})" title="최저가가 떨어지면 알림 (살 타이밍)">⬇ 저가하락${w.lowestPriceAlert ? ' 감지중' : ''}</button>
-          ${w.lowestPriceAlert ? `<input type="number" min="0" step="0.5" value="${w.lowestPriceThresholdPct || 0}" title="최소 몇 % 이상 떨어져야 알림을 울릴지 (0=조금만 떨어져도)" onchange="setLowestPriceThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↓</span><button class="ghost" onclick="applySuggestedThreshold(${w.kind_id}, 'low')" title="${suggestedTitle}">✨추천</button>` : ''}
+          ${w.lowestPriceAlert ? `<input type="number" min="0" step="0.5" value="${w.lowestPriceThresholdPct || 0}" title="최소 몇 % 이상 떨어져야 알림을 울릴지 (0=조금만 떨어져도)" onchange="setLowestPriceThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↓</span><button class="ghost" onclick="applySuggestedThreshold(${w.kind_id}, 'low')" title="${suggestedTitle}">✨추천</button><select title="연속 몇 번 확인되면 울릴지 (오탐 방지)" onchange="setLowestPriceConfirm(${w.kind_id}, this.value)">${confirmOptions(w.lowestPriceConfirm)}</select>` : ''}
           <button class="ghost${w.highestPriceAlert ? ' toggle-on highprice' : ''}" onclick="toggleHighestPriceAlert(${w.kind_id})" title="최저가가 오르면 알림 (팔 타이밍)">⬆ 저가상승${w.highestPriceAlert ? ' 감지중' : ''}</button>
-          ${w.highestPriceAlert ? `<input type="number" min="0" step="0.5" value="${w.highestPriceThresholdPct || 0}" title="최소 몇 % 이상 올라야 알림을 울릴지 (0=조금만 올라도)" onchange="setHighestPriceThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↑</span><button class="ghost" onclick="applySuggestedThreshold(${w.kind_id}, 'high')" title="${suggestedTitle}">✨추천</button>` : ''}
+          ${w.highestPriceAlert ? `<input type="number" min="0" step="0.5" value="${w.highestPriceThresholdPct || 0}" title="최소 몇 % 이상 올라야 알림을 울릴지 (0=조금만 올라도)" onchange="setHighestPriceThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↑</span><button class="ghost" onclick="applySuggestedThreshold(${w.kind_id}, 'high')" title="${suggestedTitle}">✨추천</button><select title="연속 몇 번 확인되면 울릴지 (오탐 방지)" onchange="setHighestPriceConfirm(${w.kind_id}, this.value)">${confirmOptions(w.highestPriceConfirm)}</select>` : ''}
           <button class="ghost${w.listingDropAlert ? ' toggle-on dropwarn' : ''}" onclick="toggleListingDropAlert(${w.kind_id})" title="매물 수량이 급격히 줄면(품귀) 알림 — 팔 타이밍 신호">⚠ 품귀${w.listingDropAlert ? ' 감지중' : ''}</button>
           ${w.listingDropAlert ? `<input type="number" min="1" step="1" value="${w.listingDropThreshold || 1}" title="최소 몇 개 이상 줄어야 알림을 울릴지" onchange="setListingDropThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">개↓</span>` : ''}
         </div>

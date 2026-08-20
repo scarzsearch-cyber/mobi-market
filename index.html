@@ -106,7 +106,12 @@
   .watch-item-toggles select{padding:3px 4px; font-size:11.5px;}
   .w-valuation{font-weight:700; padding:1px 6px; border-radius:4px; background:var(--panel);}
   .w-deplete{color:var(--down); font-weight:700; white-space:nowrap;}
-  .watch-item-wrap{display:flex; flex-direction:column; gap:6px;}
+  .watch-list-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:10px; align-items:start;}
+  @media (max-width:480px){ .watch-list-grid{grid-template-columns:1fr;} }
+  .watch-item-wrap{display:flex; flex-direction:column; gap:6px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; height:fit-content;}
+  .watch-item-wrap .watch-item{background:var(--panel-2);}
+  .watch-item-quickbtns{display:flex; gap:6px; flex-wrap:wrap; padding:0 2px;}
+  .watch-item-quickbtns button{padding:4px 8px; font-size:12px;}
   .watch-alert-panel{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px 12px; margin-left:14px; display:flex; flex-direction:column; gap:8px;}
   .watch-alert-form{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
   .watch-alert-form input[type=number]{width:130px;}
@@ -231,12 +236,33 @@
           <label class="hint" style="margin:0;">정렬</label>
           <select id="watchSortSel" onchange="saveWatchSort()">
             <option value="default">추가된 순서</option>
-            <option value="valuation">저평가순 (쌀수록 위)</option>
+            <option value="signal">사기/팔기 신호순 (사기 좋을수록 위, 팔기 좋을수록 아래)</option>
+            <option value="valuation">평균 대비 저평가순 (참고용, 쌀수록 위)</option>
             <option value="price">현재가 낮은순</option>
           </select>
-          <span class="hint" style="margin:0;">※ 저평가순은 시세이력을 한 번이라도 불러온 아이템만 정확히 정렬돼요</span>
+          <span class="hint" style="margin:0;">※ 신호순·저평가순은 시세이력을 한 번이라도 불러온 아이템만 정확히 정렬돼요. 파밍 우선순위는 "신호순"에서 맨 아래(팔기 좋음)를 보면 돼요.</span>
         </div>
-        <div id="watchList" style="display:flex; flex-direction:column; gap:8px;"></div>
+        <div id="watchList" class="watch-list-grid"></div>
+      </div>
+    </details>
+
+    <div class="section-divider"></div>
+
+    <details id="craftDetails">
+      <summary>🔨 제작 손익 계산기</summary>
+      <div class="section-body">
+        <div class="hint" id="craftFeeHint" style="margin:0 0 8px;">
+          재료는 한번 사면 되팔 수 없지만, 제작한 장비는 팔 수 있어요. 재료는 감시 목록에 없어도 이름으로 바로 검색해서 불러올 수 있어요.
+          "장비 예상 판매가"까지 넣으면 판매 시 수수료를 뗀 실수령액 기준으로, 재료 그대로 파는 것보다 제작하는 게 이득인지 계산해줘요.
+        </div>
+        <div id="craftMaterialRows" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;"></div>
+        <button class="ghost" onclick="addCraftMaterialRow()">+ 재료 추가</button>
+        <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:10px; margin-top:10px;">
+          <span style="min-width:120px;">장비 예상 판매가</span>
+          <input type="number" id="craftEquipPrice" min="0" step="1" placeholder="예: 5000" oninput="renderCraftCalc()">
+          <span class="hint" style="margin:0;">(아직 안 만들었으면 비슷한 완제품 거래소 시세로 어림잡아도 돼요)</span>
+        </div>
+        <div id="craftResultBox" style="margin-top:10px; padding:12px 14px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; font-family:var(--mono); font-size:13.5px; display:none;"></div>
       </div>
     </details>
 
@@ -365,6 +391,7 @@
           <div class="watch-alert-form">
             <span class="hint" id="alertOutcomeSummary" style="margin:0;">아직 판정된 알림이 없어요.</span>
             <button class="ghost" onclick="clearAlertOutcomeLog()">기록 초기화</button>
+            <button class="ghost" onclick="bulkApplySuggestedThresholds()" title="변동폭(%) 설정이 0(기본값)으로 남아있는 아이템에, 각자의 최근 변동성 기반 추천값을 한 번에 채워넣습니다. 야생·원념·파동처럼 좁은 범위에서 잔움직임에도 알림이 울리는 아이템들의 노이즈를 줄여 적중률을 올리는 데 도움이 됩니다.">📊 감시 목록에 추천 임계값 일괄 적용</button>
           </div>
           <div id="alertOutcomePanel" style="max-height:260px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px;">
             <div class="hint" style="margin:0;">알림이 울리고 30분이 지나면 여기에 결과가 쌓여요.</div>
@@ -452,6 +479,9 @@
 </div>
 
 <script>
+let kakaoLoggedIn = false; // 스크립트 맨 위에서 선언 — 어떤 코드보다도 먼저 초기화되도록 고정 (TDZ 방지)
+let craftMaterialRows = []; // [{ id, kindId, name, qty, price, soldOut, loading }] — 페이지 로드 중 renderWatchList()가 곧바로 참조하므로 맨 위에서 선언 (TDZ 방지)
+let craftRowIdSeq = 1;
 const BASE_URL = "https://open.mabimobi.life/v1";
 let autoTimer = null;
 let lastKindId = null;
@@ -493,7 +523,7 @@ let alertsByKind = {}; // { [kind_id]: [{id, price, dir:'above'|'below', fired}]
 let alertIdSeq = 1;
 let titleFlashTimer = null;
 let watchList = []; // [{kind_id, name, price, soldOut, count, newListingAlert, newListingThreshold, lowestPriceAlert, highestPriceAlert, listingDropAlert, depletionEtaMin, pct1h, pct24h, pct7d}] — 동시 감시 목록
-let watchSortMode = 'default'; // 'default' | 'valuation' | 'price' — 감시 목록 표시 정렬 방식
+let watchSortMode = 'default'; // 'default' | 'signal' | 'valuation' | 'price' — 감시 목록 표시 정렬 방식
 let countHistoryByKind = {}; // { [kind_id]: [{count, ts}, ...] } — 매물 소진 속도 계산용 최근 수량 이력 (최대 6개)
 let priceHistoryByKind = {}; // { [kind_id]: [{price, ts}, ...] } — 단기 추세 예측(선형회귀)용 최근 가격 이력 (최대 8개)
 let pendingAlertEvals = []; // [{id, kindId, itemName, alertLabel, direction:'buy'|'sell', priceAtFire, firedAt, evalAt}] — 적중률 판정 대기 중인 알림들
@@ -512,8 +542,6 @@ let lastAnalysisCtx = null;  // renderAnalysis에 마지막으로 넘긴 값 —
 let fullAnalysisCtx = null;  // 전체 조회 기간 기준 분석 컨텍스트 (확대 안 했을 때 사용)
 
 // ---- 새로고침(F5)해도 유지: API 키 / 감시 목록 / 알림 / 마지막 검색어·기간을 localStorage에 저장 ----
-let kakaoLoggedIn = false;
-
 const LS_KEYS = {
   apiKey: 'ggMarket.apiKey',
   watchList: 'ggMarket.watchList',
@@ -3334,17 +3362,18 @@ function computeAvgForKind(kindId) {
 }
 
 // 감시 목록 아이템의 과거 시세이력 캐시에서 백분위 가격을 구한다 — "적정 등록가 추천"용.
-// percentile=80이면 "최근 시세 중 상위 20% 안에 드는 가격"을 반환 — 재판매가 불가능한
-// 시장에서 파는 입장이라면, 최저가 근처가 아니라 이 정도 가격대에 걸어야 손해를 덜 본다.
-// computeAvgForKind와 마찬가지로 시세이력을 한 번도 안 불러온 아이템이면 null.
+// percentile=85면 "최근 시세 중 상위 15% 안에 드는 가격"을 반환. 신호 점수와 마찬가지로
+// 지난 시즌/패치 데이터는 지금과 무관하므로 최근 PERCENTILE_WINDOW_DAYS(7일) 창만 본다.
 function computePercentileForKind(kindId, percentile) {
   const kindCache = historyCacheByKind[kindId];
   if (!kindCache) return null;
-  const days = document.getElementById('daysSel').value;
-  const entry = kindCache[days] || Object.values(kindCache)[0];
-  if (!entry) return null;
+  const entries = Object.entries(kindCache).filter(([, e]) => e && e.histData && e.histData.points && e.histData.points.length);
+  if (!entries.length) return null;
+  entries.sort((a, b) => (Number(b[0]) || 0) - (Number(a[0]) || 0));
+  const entry = entries[0][1];
+  const cutoff = Date.now() - PERCENTILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const closes = (entry.histData.points || [])
-    .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined)
+    .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined && p.time && new Date(p.time).getTime() >= cutoff)
     .map(p => p.close)
     .sort((a, b) => a - b);
   if (!closes.length) return null;
@@ -3352,11 +3381,21 @@ function computePercentileForKind(kindId, percentile) {
   return closes[idx];
 }
 
-// 추천 등록가(상위 20% 가격) 그대로 "이상이면 알림" 가격 알림으로 등록한다 — 등록해둘
-// 물건의 시세가 이 정도까지 오르면 그때 판매 등록하라는 신호로 쓸 수 있다.
+// 추천 등록가: "수수료(15%) 떼고도 최근 7일 시세 중 상위 15% 안에 드는" 가격을 역산해서
+// 추천한다. 재구매 불가 시장에서 재료를 파는 입장이라, 신호 점수가 "지금 팔기 좋음"으로
+// 잡는 것과 같은 기준선(순위 상위 15%)을 등록가에도 그대로 맞춘 것 — 이 가격 밑으로는
+// 수수료 감안 시 사실상 애매한 타이밍에 파는 셈이 된다.
+function computeSuggestedListingPrice(kindId) {
+  const netTarget = computePercentileForKind(kindId, 85);
+  if (netTarget === null) return null;
+  return netTarget / (1 - SELL_FEE_PCT / 100);
+}
+
+// 추천 등록가 그대로 "이상이면 알림" 가격 알림으로 등록한다 — 등록해둘 물건의 시세가
+// 이 정도까지 오르면 그때 판매 등록하라는 신호로 쓸 수 있다.
 function addSuggestedPriceAlert(kindId) {
-  const suggested = computePercentileForKind(kindId, 80);
-  if (suggested === null) { setHint('이 아이템은 아직 시세이력을 불러온 적이 없어 추천가를 계산할 수 없어요 — 먼저 [조회]로 한 번 불러와 주세요.', true); return; }
+  const suggested = computeSuggestedListingPrice(kindId);
+  if (suggested === null) { setHint('이 아이템은 최근 7일 시세이력이 부족해 추천가를 계산할 수 없어요 — 먼저 [조회]로 불러와 주세요.', true); return; }
 
   const marginPct = readMarginPct(kindId);
   if ('Notification' in window && Notification.permission === 'default') {
@@ -3365,12 +3404,231 @@ function addSuggestedPriceAlert(kindId) {
   if (!alertsByKind[kindId]) alertsByKind[kindId] = [];
   alertsByKind[kindId].push({
     id: alertIdSeq++, type: 'threshold', price: Math.round(suggested), dir: 'above', marginPct, fired: false,
-    note: `추천 등록가(최근 상위 20%)`,
+    note: `추천 등록가 (수수료 ${SELL_FEE_PCT}% 제외 실수령 기준 최근 7일 상위 15%)`,
   });
   renderWatchList();
 }
 
-// 평균 대비 -N%(급락) / +N%(급등) 알림을 절대가로 환산해서 일반 가격 알림으로 등록한다.
+// ---- 제작 손익 계산기 ----
+// 재료는 재구매 불가(한번 사면 못 파는) 소모품이지만, 그 재료로 만든 장비는 거래소에서
+// 팔 수 있다. "재료 그대로 파는 것"과 "제작해서 장비로 파는 것" 중 뭐가 이득인지는
+// 판매 수수료(15%)까지 감안해야 정확히 비교된다:
+//   - 재료비 합계 = Σ(재료 단가 × 필요 수량)  ※ 재료는 구매만 가능, 수수료 없음
+//   - 장비 실수령액 = 장비 판매가 × (1 - 15%)
+//   - 제작 손익 = 장비 실수령액 - 재료비 합계
+// 재료는 감시 목록과 무관하게 이름으로 직접 검색해서 불러온다(감시 목록에 없어도 됨).
+// 이미 감시 중인 아이템이면 그 값을 재사용해 API 호출을 아낀다.
+function addCraftMaterialRow() {
+  craftMaterialRows.push({ id: craftRowIdSeq++, kindId: null, name: '', qty: 1, price: null, soldOut: false, loading: false });
+  renderCraftMaterialRows();
+  renderCraftCalc();
+}
+
+function removeCraftMaterialRow(rowId) {
+  craftMaterialRows = craftMaterialRows.filter(r => r.id !== rowId);
+  hideCraftMaterialSuggestions(rowId);
+  renderCraftMaterialRows();
+  renderCraftCalc();
+}
+
+function setCraftMaterialQty(rowId, val) {
+  const row = craftMaterialRows.find(r => r.id === rowId);
+  if (!row) return;
+  const n = parseFloat(val);
+  row.qty = (!n || n < 0) ? 0 : n;
+  renderCraftCalc();
+}
+
+// 재료 이름을 타이핑하는 동안(디바운스 450ms) 매칭 아이템을 검색해 드롭다운으로 보여준다.
+// 위쪽 메인 검색창의 자동완성과 동일한 방식이며, 각 재료 행마다 독립적으로 동작한다.
+let craftMatSuggestTimers = {};
+function onCraftMaterialInput(rowId, value) {
+  const row = craftMaterialRows.find(r => r.id === rowId);
+  if (!row) return;
+  row.name = value;
+  row.kindId = null; // 이름을 직접 고치는 중이면 이전에 확정했던 선택은 해제
+  row.price = null;
+  row.soldOut = false;
+  if (craftMatSuggestTimers[rowId]) clearTimeout(craftMatSuggestTimers[rowId]);
+  const q = value.trim();
+  if (!q) { hideCraftMaterialSuggestions(rowId); renderCraftCalc(); return; }
+  craftMatSuggestTimers[rowId] = setTimeout(() => fetchCraftMaterialSuggestions(rowId, q), 450);
+  renderCraftCalc();
+}
+
+async function fetchCraftMaterialSuggestions(rowId, query) {
+  const apiKeyVal = document.getElementById('apiKey').value.trim();
+  if (!apiKeyVal) return; // 키 없으면 어차피 실패할 요청이라 조용히 스킵
+  try {
+    const res = await apiFetch(`${BASE_URL}/market/items?search=${encodeURIComponent(query)}&limit=8`, { headers: headers() });
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = data.data || [];
+    const row = craftMaterialRows.find(r => r.id === rowId);
+    if (!row || row.name.trim() !== query) return; // 그 사이 입력이 바뀌었으면 오래된 응답은 버림
+    renderCraftMaterialSuggestions(rowId, list, query);
+  } catch (e) { /* 자동완성 실패는 조용히 무시 */ }
+}
+
+function renderCraftMaterialSuggestions(rowId, list, query) {
+  const box = document.getElementById(`craftMatSuggest_${rowId}`);
+  if (!box) return;
+  if (!list.length) { hideCraftMaterialSuggestions(rowId); return; }
+  box.innerHTML = list.map(it => {
+    const name = it.name || '';
+    const idx = name.toLowerCase().indexOf(query.toLowerCase());
+    const highlighted = idx === -1 ? name
+      : `${name.slice(0, idx)}<b style="color:var(--accent);">${name.slice(idx, idx + query.length)}</b>${name.slice(idx + query.length)}`;
+    return `<li data-kind-id="${it.kind_id}" data-name="${name.replace(/"/g, '&quot;')}"
+              style="padding:7px 10px; cursor:pointer; border-radius:6px; font-size:14px;"
+              onmouseover="this.style.background='var(--line)'" onmouseout="this.style.background='transparent'"
+              onclick="pickCraftMaterialSuggestion(${rowId}, ${it.kind_id}, this.dataset.name)">${highlighted}</li>`;
+  }).join('');
+  box.style.display = 'block';
+}
+
+function hideCraftMaterialSuggestions(rowId) {
+  const box = document.getElementById(`craftMatSuggest_${rowId}`);
+  if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+}
+
+function pickCraftMaterialSuggestion(rowId, kindId, name) {
+  const row = craftMaterialRows.find(r => r.id === rowId);
+  if (!row) return;
+  row.kindId = kindId;
+  row.name = name;
+  hideCraftMaterialSuggestions(rowId);
+  renderCraftMaterialRows();
+  fetchCraftMaterialPriceForRow(rowId);
+}
+
+// 확정된 재료의 현재가를 불러온다. 감시 목록에 같은 아이템이 이미 있으면 그 값을 그대로
+// 재사용해 API 호출을 아끼고, 없으면 직접 조회한다.
+async function fetchCraftMaterialPriceForRow(rowId) {
+  const row = craftMaterialRows.find(r => r.id === rowId);
+  if (!row || !row.kindId) return;
+
+  const inWatch = watchList.find(w => w.kind_id === row.kindId);
+  if (inWatch && inWatch.price !== null && inWatch.price !== undefined) {
+    row.price = inWatch.price;
+    row.soldOut = inWatch.soldOut;
+    renderCraftMaterialRows();
+    renderCraftCalc();
+    return;
+  }
+
+  row.loading = true;
+  renderCraftMaterialRows();
+  try {
+    const res = await apiFetch(`${BASE_URL}/market/prices?search=${encodeURIComponent(row.name)}&limit=20`, { headers: headers() });
+    if (res.ok) {
+      const data = await res.json();
+      const found = (data.data || []).find(d => d.kind_id === row.kindId);
+      if (found) {
+        row.price = found.is_sold_out ? null : found.min_price;
+        row.soldOut = found.is_sold_out;
+      }
+    }
+  } catch (e) { /* 조용히 무시 — 결과창에서 재조회 버튼으로 안내 */ }
+  row.loading = false;
+  renderCraftMaterialRows();
+  renderCraftCalc();
+}
+
+// 재료 검색 행들을 그린다 — 각 행이 독립된 검색창 + 수량 + 불러온 단가로 구성된다.
+function renderCraftMaterialRows() {
+  const box = document.getElementById('craftMaterialRows');
+  if (!box) return;
+  if (!craftMaterialRows.length) {
+    box.innerHTML = '<span class="hint" style="margin:0;">아직 추가된 재료가 없어요 — "+ 재료 추가"를 눌러주세요.</span>';
+    return;
+  }
+  box.innerHTML = craftMaterialRows.map(row => {
+    let priceLabel;
+    if (row.loading) priceLabel = '조회 중…';
+    else if (!row.kindId) priceLabel = '—';
+    else if (row.soldOut) priceLabel = '품절';
+    else if (row.price !== null && row.price !== undefined) priceLabel = `${row.price.toLocaleString()} 데카`;
+    else priceLabel = '가격 없음';
+    return `
+    <div class="craft-mat-row" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <div style="position:relative; flex:1; min-width:160px;">
+        <input type="text" class="craft-mat-input" placeholder="재료 이름 검색 (예: 파동의 영혼석)"
+          value="${(row.name || '').replace(/"/g, '&quot;')}" autocomplete="off"
+          oninput="onCraftMaterialInput(${row.id}, this.value)"
+          onkeydown="if(event.key==='Escape') hideCraftMaterialSuggestions(${row.id})"
+          style="width:100%;">
+        <ul class="craft-mat-suggestions" id="craftMatSuggest_${row.id}" style="display:none; position:absolute; top:100%; left:0; right:0; z-index:20; margin:4px 0 0; padding:4px; list-style:none; background:var(--panel); border:1px solid var(--line); border-radius:8px; max-height:200px; overflow-y:auto; box-shadow:0 4px 12px rgba(0,0,0,0.4);"></ul>
+      </div>
+      <input type="number" min="0" step="1" value="${row.qty}" style="width:70px;" onchange="setCraftMaterialQty(${row.id}, this.value)">
+      <span class="hint" style="margin:0;">개</span>
+      <span style="min-width:90px; text-align:right; font-family:var(--mono); font-size:13px; color:${row.kindId && !row.loading && (row.price === null || row.price === undefined) ? 'var(--down)' : 'var(--text)'};">${priceLabel}</span>
+      ${row.kindId ? `<button class="ghost" onclick="fetchCraftMaterialPriceForRow(${row.id})" title="가격 새로고침">↻</button>` : ''}
+      <button class="ghost" onclick="removeCraftMaterialRow(${row.id})">삭제</button>
+    </div>`;
+  }).join('');
+}
+
+// 바깥 클릭하면 열려있는 재료 검색 드롭다운을 닫는다.
+document.addEventListener('click', (e) => {
+  craftMaterialRows.forEach(row => {
+    const box = document.getElementById(`craftMatSuggest_${row.id}`);
+    if (!box) return;
+    const input = box.previousElementSibling;
+    if (!box.contains(e.target) && e.target !== input) hideCraftMaterialSuggestions(row.id);
+  });
+});
+
+// 재료비 합계·장비 실수령액·손익을 계산해 결과 박스에 표시한다.
+// 아직 확정되지 않았거나 현재가를 모르는 재료가 하나라도 있으면 그 사실을 알려주고 계산을 보류한다.
+function renderCraftCalc() {
+  const resultBox = document.getElementById('craftResultBox');
+  if (!resultBox) return;
+  if (!craftMaterialRows.length) { resultBox.style.display = 'none'; return; }
+
+  const missing = [];
+  let materialCost = 0;
+  for (const row of craftMaterialRows) {
+    if (!row.kindId) { missing.push(row.name ? row.name : '(재료 미선택)'); continue; }
+    // 같은 재료가 감시 목록에도 있으면 그쪽이 더 최신일 수 있으니 매번 최신값으로 맞춰준다
+    const inWatch = watchList.find(w => w.kind_id === row.kindId);
+    if (inWatch && inWatch.price !== null && inWatch.price !== undefined) {
+      row.price = inWatch.price;
+      row.soldOut = inWatch.soldOut;
+    }
+    if (row.loading) { missing.push(`${row.name} (조회 중…)`); continue; }
+    if (row.price === null || row.price === undefined) { missing.push(row.name || `#${row.kindId}`); continue; }
+    materialCost += row.price * (row.qty || 0);
+  }
+  if (missing.length) {
+    resultBox.style.display = 'block';
+    resultBox.innerHTML = `<span style="color:var(--down);">⚠ 현재가를 아직 모르는 재료가 있어요: ${missing.join(', ')} — 검색 결과에서 재료를 다시 선택해주세요.</span>`;
+    return;
+  }
+
+  const equipPriceInput = document.getElementById('craftEquipPrice');
+  const equipPrice = parseFloat(equipPriceInput ? equipPriceInput.value : '');
+  resultBox.style.display = 'block';
+
+  if (!equipPrice || equipPrice <= 0) {
+    resultBox.innerHTML = `재료비 합계: <b>${Math.round(materialCost).toLocaleString()}</b> 데카 (장비 예상 판매가를 입력하면 손익까지 계산돼요)`;
+    return;
+  }
+
+  const equipNet = equipPrice * (1 - SELL_FEE_PCT / 100);
+  const profit = equipNet - materialCost;
+  const profitPct = materialCost ? (profit / materialCost) * 100 : null;
+  const good = profit > 0;
+  resultBox.innerHTML = `
+    재료비 합계: <b>${Math.round(materialCost).toLocaleString()}</b> 데카<br>
+    장비 판매가 ${Math.round(equipPrice).toLocaleString()} → 수수료 ${SELL_FEE_PCT}% 제외 실수령: <b>${Math.round(equipNet).toLocaleString()}</b> 데카<br>
+    <span style="color:${good ? 'var(--up)' : 'var(--down)'}; font-weight:700;">
+      제작 손익: ${profit >= 0 ? '+' : ''}${Math.round(profit).toLocaleString()} 데카${profitPct !== null ? ` (${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}%)` : ''}
+      — ${good ? '재료 그대로 파는 것보다 제작해서 파는 게 이득이에요' : '제작해서 팔면 오히려 손해예요 (재료로 그냥 파는 게 나음)'}
+    </span>`;
+}
+
+
 // 이후 검사·표시 로직은 기존 가격 알림과 완전히 동일하게 동작한다.
 function addPercentAlert(kindId) {
   const pctInput = document.getElementById(`ap_pct_${kindId}`);
@@ -3446,7 +3704,7 @@ function addTrendReversalAlert(kindId) {
 function ensureWatchListHasItem(picked) {
   const existing = watchList.find(w => w.kind_id === picked.kind_id);
   if (existing) { refreshWatchItem(existing); return existing; }
-  const entry = { kind_id: picked.kind_id, name: picked.name, price: null, soldOut: false, count: null, newListingAlert: false, newListingThreshold: 1 };
+  const entry = { kind_id: picked.kind_id, name: picked.name, price: null, soldOut: false, count: null, newListingAlert: false, newListingThreshold: 1, lowestPriceConfirm: 2, highestPriceConfirm: 2 };
   watchList.push(entry);
   renderWatchList();
   refreshWatchItem(entry);
@@ -3733,34 +3991,95 @@ function computeDepletionBadgeText(w) {
   return `⚡ 품절임박 (${m < 1 ? '1분 미만' : `~${m}분`})`;
 }
 
+// 감시 목록 아이템의 과거 시세이력 캐시에서, 주어진 가격이 그 분포 안에서 하위 몇 %에
+// 위치하는지(백분위)를 구한다. 0에 가까울수록 "최근 국면 기준으로 유난히 쌌던 가격",
+// 100에 가까울수록 "유난히 비쌌던 가격" — 평균 대비 편차(흐름 참고용)와 달리, 이건
+// "실제로 싸게 사서 비싸게 판다"는 절대 기준을 판단하기 위한 값이다.
+//
+// 이 게임은 시즌제라 시즌 초/패치 전후로 같은 아이템의 가치 자체가 통째로 바뀐다
+// (예: 세공기가 작년 1300데카 → 지금 170~200데카, 강화재연소 촉매가 3000데카 → 지금
+// 600데카대). 이런 자릿수 단위의 국면 변화에서는 옛 데이터를 약하게라도 섞으면 안 되고
+// (이상치 하나가 백분위 전체를 왜곡할 수 있음), 아예 기간이 지나면 완전히 잘라내는 게
+// 맞다. 그래서 최근 일정 기간(기본 14일)이 지난 시세는 통째로 제외하고, 그 안의 시세만
+// 가지고 지금 가격의 상대적 위치를 판단한다.
+const PERCENTILE_WINDOW_DAYS = 7; // 이보다 오래된 시세는 완전히 제외 — 패치 주기(1주)에 맞춤
+
+function computePricePercentileRank(kindId, price) {
+  if (price === null || price === undefined) return null;
+  const kindCache = historyCacheByKind[kindId];
+  if (!kindCache) return null;
+  const entries = Object.entries(kindCache).filter(([, e]) => e && e.histData && e.histData.points && e.histData.points.length);
+  if (!entries.length) return null;
+  // 가장 길게 불러와둔 캐시를 재료로 쓰되, 실제로는 아래에서 최근 윈도우 밖의 시세는
+  // 전부 잘라내고 그 안의 것만 쓴다.
+  entries.sort((a, b) => (Number(b[0]) || 0) - (Number(a[0]) || 0));
+  const entry = entries[0][1];
+  const cutoff = Date.now() - PERCENTILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const closes = (entry.histData.points || [])
+    .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined && p.time && new Date(p.time).getTime() >= cutoff)
+    .map(p => p.close);
+  if (!closes.length) return null;
+  const countBelowOrEqual = closes.reduce((n, c) => n + (c <= price ? 1 : 0), 0);
+  return (countBelowOrEqual / closes.length) * 100;
+}
+
 // ---- 종합 실시간 신호 스코어 ----
-// 여러 지표(평균 대비 위치, 24h 모멘텀, 24h 수량 변동, 매물 소진 속도)를 하나의 -100~+100
-// 점수로 합친다. 양수면 "살 타이밍에 가깝다"(저평가/하락 모멘텀/매물 증가), 음수면
-// "팔 타이밍에 가깝다"(고평가/상승 모멘텀/품귀). 데이터가 하나도 없으면 null.
-// 참고용 지표일 뿐 확정적인 매수/매도 신호가 아니라는 점은 배지 표시부에서 함께 안내한다.
+// 이 재료들은 지수추종형 장투가 아니라 패치/요일에 따라 급등락하는 테마성 단타 성향이 강하다.
+// 원칙은 단순하다: "싸게 사서 비싸게 판다" — 단, 판매엔 고정 수수료 15%가 붙고, 한번 팔면
+// 되사기 전까지 다시 정가에 사야 하는(=노가다해서 구해야 하는) 재구매 불가 구조다.
+// 그래서 "평균보다 싸다/비싸다"(흐름 참고용, 평균대비 배지로 별도 표시)가 아니라,
+// "과거 시세 분포에서 실제로 극단적으로 싼/비싼 가격인가"를 주 지표로 삼는다.
+// "매물이 품귀라서 비싸진다"처럼 수량·모멘텀 지표는 사실 가격 극단의 원인일 뿐, 결과인
+// 가격 자체에 이미 반영돼 있다. 그래서 가격(백분위 극단성)을 압도적인 주 지표로 두고,
+// 나머지 지표들은 "가격은 아직 안 움직였지만 조짐이 보이는" 경우를 잡아주는 보조 확인
+// 정도로만 약하게 반영한다 — 품귀가 아니어도 가격 자체가 극단이면 그것만으로 신호가 뜬다.
+// 데이터가 하나도 없으면 null. 참고용 지표일 뿐 확정적인 매수/매도 신호가 아니라는 점은
+// 배지 표시부에서 함께 안내한다.
+const SELL_FEE_PCT = 15;
+
 function computeSignalScore(w) {
   let total = 0, used = false;
 
-  const avg = computeAvgForKind(w.kind_id);
-  if (avg && w.price !== null && w.price !== undefined) {
-    const devPct = ((w.price - avg) / avg) * 100;
-    total += Math.max(-30, Math.min(30, -devPct)); // 평균보다 싸면(devPct<0) 양수 기여
+  // 주 지표: 과거 시세 분포 내 백분위 극단성 (최대 ±85점 — 이것만으로도 문턱을 넘을 수 있음)
+  const rank = computePricePercentileRank(w.kind_id, w.price);
+  if (rank !== null) {
+    let extremity; // 양수=사기 좋음(쌈), 음수=팔기 좋음(비쌈)
+    if (rank <= 50) {
+      // 하위권일수록(0에 가까울수록) 사기 좋은 극단
+      extremity = (50 - rank) * 2; // 0(중간) ~ 100(역대 최저가 수준)
+    } else {
+      // 상위권이어도, 수수료 15%를 뗀 실수령액 기준으로 다시 백분위를 매겨서
+      // "수수료 떼고도 여전히 역대급으로 비싼 축"인지 재확인한다.
+      const netProceeds = w.price * (1 - SELL_FEE_PCT / 100);
+      const netRank = computePricePercentileRank(w.kind_id, netProceeds);
+      extremity = netRank === null ? 0 : -Math.max(0, (netRank - 50) * 2);
+    }
+    total += Math.max(-85, Math.min(85, extremity));
     used = true;
   }
+  // 보조 지표: 가격에 아직 안 잡힌 조짐을 살짝만 더해주는 용도 (합쳐서 최대 ±15 수준)
   if (w.pct24h !== null && w.pct24h !== undefined) {
-    total += Math.max(-20, Math.min(20, -w.pct24h)); // 24h 하락 중이면 양수 기여
+    total += Math.max(-6, Math.min(6, -w.pct24h * 0.3)); // 24h 하락 중이면 양수 기여
     used = true;
   }
   if (w.countChange24h !== null && w.countChange24h !== undefined) {
-    total += Math.max(-20, Math.min(20, w.countChange24h * 0.4)); // 매물 증가는 양수 기여
+    total += Math.max(-6, Math.min(6, w.countChange24h * 0.12)); // 매물 증가는 양수 기여
     used = true;
   }
   if (w.depletionEtaMin !== null && w.depletionEtaMin !== undefined && w.depletionEtaMin <= 10) {
-    total += -((10 - w.depletionEtaMin) / 10) * 25; // 소진이 임박할수록 음수(팔기 좋음) 방향
+    total += -((10 - w.depletionEtaMin) / 10) * 8; // 소진이 임박할수록 음수(팔기 좋음) 방향
     used = true;
   }
   if (!used) return null;
   return Math.max(-100, Math.min(100, Math.round(total)));
+}
+
+// 점수(-100~100)를 5칸짜리 강도 막대(●○○○○)로 변환.
+// |score| 20점당 한 칸씩 채우되, 중립 구간(|score|<40)은 0칸으로 비워 둔다.
+function signalStrengthBar(score) {
+  if (Math.abs(score) < 40) return '○○○○○';
+  const filled = Math.max(1, Math.min(5, Math.ceil(Math.abs(score) / 20)));
+  return '●'.repeat(filled) + '○'.repeat(5 - filled);
 }
 
 function computeSignalBadge(w) {
@@ -3770,12 +4089,25 @@ function computeSignalBadge(w) {
   // "매수우위/매도우위"처럼 "누가 우세한가"로 읽히는 표현은 "매수세가 강해서 오히려 가격이
   // 오른다"는 정반대 의미로도 읽힐 수 있어 혼동을 준다. 그래서 "지금 사기/팔기 좋다"처럼
   // 행동을 직접 가리키는 문구로 명확히 한다.
-  if (score >= 40) { label = '🟢 지금 사기 좋음'; color = 'var(--up)'; }
-  else if (score >= 15) { label = '🟢 사기 좋은 편'; color = 'var(--up)'; }
-  else if (score <= -40) { label = '🔴 지금 팔기 좋음'; color = 'var(--down)'; }
-  else if (score <= -15) { label = '🔴 팔기 좋은 편'; color = 'var(--down)'; }
+  // 재구매 불가 구조라 애매한 신호는 오히려 손해로 이어지기 쉬워, 문턱을 40/70으로 높여
+  // "진짜 극단"에서만 켜지게 한다.
+  if (score >= 70) { label = '🟢 지금 사기 좋음'; color = 'var(--up)'; }
+  else if (score >= 40) { label = '🟢 사기 좋은 편'; color = 'var(--up)'; }
+  else if (score <= -70) { label = '🔴 지금 팔기 좋음'; color = 'var(--down)'; }
+  else if (score <= -40) { label = '🔴 팔기 좋은 편'; color = 'var(--down)'; }
   else { label = '⚪ 중립'; color = 'var(--dim)'; }
-  return { score, text: `${label} ${score >= 0 ? '+' : ''}${score}`, color };
+  const bar = signalStrengthBar(score);
+  return {
+    score,
+    text: `${label} ${score >= 0 ? '+' : ''}${score} ${bar}`,
+    color,
+    tooltip: '평균은 그저 흐름 참고용(평균대비 배지에서 별도 표시)이고, 이 점수는 "과거 시세 분포에서 실제로 얼마나 싸거나 비싼 축인가"로 계산돼요.\n'
+      + '품귀 등 다른 조건이 없어도, 가격 자체가 역대급으로 싸거나(사기) 비싸면(팔기) 그것만으로 신호가 떠요.\n'
+      + `판매 쪽 계산에는 고정 수수료 ${SELL_FEE_PCT}%가 반영돼요 (수수료 떼고도 여전히 역대급으로 비싼 축인지 기준).\n`
+      + '수량 변화·모멘텀·소진임박도는 가격에 아직 안 잡힌 조짐을 살짝 보태는 보조 지표일 뿐이에요.\n'
+      + '막대(●○○○○)는 점수의 세기를 5단계로 보여줘요.\n'
+      + '±40 미만: 중립(빈 막대, 재구매 불가 구조상 움직이지 않는 게 안전) · ±40~69: 좋은 편(1~2칸) · ±70 이상: 지금 확실히 좋음(3~5칸)',
+  };
 }
 
 // 단기 추세 예측(다음 15분 예상가) 배지 텍스트 — computeProjectedPrice가 데이터 부족으로
@@ -3793,14 +4125,18 @@ function computeProjectedBadgeText(w) {
 // 아이템마다 평소 흔들리는 폭(표준편차 기반 변동계수)이 다르다 — 조용한 아이템은 1~2%
 // 움직임도 의미가 있는 반면, 원래 출렁이는 아이템은 10% 정도는 그냥 일상적인 노이즈일 수 있다.
 // 그래서 고정된 숫자 대신 이 아이템의 최근 변동계수(cv)의 일부를 임계값으로 추천한다.
+// 신호 점수와 마찬가지로, 지난 시즌/지난 패치의 변동성은 지금과 무관하므로 최근
+// PERCENTILE_WINDOW_DAYS(7일) 창만 본다 — daysSel 선택값과 무관하게 고정.
 function computeSuggestedThresholdPct(kindId) {
   const kindCache = historyCacheByKind[kindId];
   if (!kindCache) return null;
-  const days = document.getElementById('daysSel').value;
-  const entry = kindCache[days] || Object.values(kindCache)[0];
-  if (!entry) return null;
+  const entries = Object.entries(kindCache).filter(([, e]) => e && e.histData && e.histData.points && e.histData.points.length);
+  if (!entries.length) return null;
+  entries.sort((a, b) => (Number(b[0]) || 0) - (Number(a[0]) || 0));
+  const entry = entries[0][1];
+  const cutoff = Date.now() - PERCENTILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const closes = (entry.histData.points || [])
-    .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined)
+    .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined && p.time && new Date(p.time).getTime() >= cutoff)
     .map(p => p.close);
   if (closes.length < 3) return null;
   const mean = closes.reduce((a, b) => a + b, 0) / closes.length;
@@ -3823,11 +4159,59 @@ function applySuggestedThreshold(kindId, dir) {
   renderWatchList();
 }
 
+// "감시 목록에 추천 임계값 일괄 적용" — 켜져 있는데 아직 변동폭(%)이 기본값(0)인 알림들에만
+// 각 아이템의 최근 변동성 기반 추천값을 채워넣는다. 이미 사용자가 직접 값을 넣어둔 알림은
+// 건드리지 않는다(의도적으로 0%로 둔 경우와 구분이 안 되므로 "아직 한 번도 안 만진" 것만 대상).
+// 시세이력을 아직 한 번도 안 불러온 아이템(historyCacheByKind에 없음)은 추천값을 계산할 수 없어 건너뛴다.
+// 연속 확인 횟수도 기본값(1=즉시 발동)으로 남아있으면 2로 올려서, 순간적인 한 틱짜리 잔움직임에
+// 바로 반응하지 않고 최소 두 번 연속 같은 방향이어야 알림이 울리게 한다.
+function bulkApplySuggestedThresholds() {
+  let applied = 0, skippedNoHistory = 0;
+  watchList.forEach(w => {
+    let touched = false;
+    if (w.lowestPriceAlert && !w.lowestPriceThresholdPct) {
+      const suggested = computeSuggestedThresholdPct(w.kind_id);
+      if (suggested === null) { skippedNoHistory++; }
+      else { w.lowestPriceThresholdPct = suggested; touched = true; }
+    }
+    if (w.highestPriceAlert && !w.highestPriceThresholdPct) {
+      const suggested = computeSuggestedThresholdPct(w.kind_id);
+      if (suggested === null) { skippedNoHistory++; }
+      else { w.highestPriceThresholdPct = suggested; touched = true; }
+    }
+    if (w.lowestPriceAlert && (!w.lowestPriceConfirm || w.lowestPriceConfirm <= 1)) { w.lowestPriceConfirm = 2; touched = true; }
+    if (w.highestPriceAlert && (!w.highestPriceConfirm || w.highestPriceConfirm <= 1)) { w.highestPriceConfirm = 2; touched = true; }
+    if (touched) applied++;
+  });
+  saveWatchStateToStorage();
+  renderWatchList();
+  if (applied === 0 && skippedNoHistory === 0) {
+    setHint('일괄 적용할 대상이 없어요 — 이미 다 직접 설정해두셨거나, 최저가 하락/상승 알림이 켜진 아이템이 없어요.');
+  } else if (skippedNoHistory > 0) {
+    setHint(`${applied}개 아이템에 추천 임계값을 적용했어요. ${skippedNoHistory}개는 시세이력을 아직 안 불러와서 건너뛰었어요 — 한 번씩 [조회]한 뒤 다시 눌러주세요.`);
+  } else {
+    setHint(`${applied}개 아이템에 추천 임계값(변동성 기반)과 연속 확인 2회를 적용했어요.`);
+  }
+}
+
+
 // 현재 정렬 모드(watchSortMode)에 따라 표시용 목록을 정렬한 사본을 반환한다.
 // (watchList 원본 순서는 저장/추가 순서 유지를 위해 건드리지 않는다)
 function getSortedWatchList() {
   const arr = watchList.slice();
-  if (watchSortMode === 'valuation') {
+  if (watchSortMode === 'signal') {
+    // 신호 점수(최근 14일 창 백분위 + 수수료 반영) 기준 — 양수(사기 좋음)일수록 위,
+    // 음수(팔기 좋음)일수록 아래. 이 순서 그대로 "맨 아래에 있는 아이템 = 지금 파밍해서
+    // 팔면 유리한 아이템"으로 읽으면 된다.
+    const scoreFor = (w) => computeSignalScore(w);
+    arr.sort((a, b) => {
+      const sa = scoreFor(a), sb = scoreFor(b);
+      if (sa === null && sb === null) return 0;
+      if (sa === null) return 1;
+      if (sb === null) return -1;
+      return sb - sa;
+    });
+  } else if (watchSortMode === 'valuation') {
     const devFor = (w) => {
       const badge = computeValuationBadge(w);
       return badge ? badge.devPct : null;
@@ -3887,11 +4271,15 @@ function patchWatchItemDisplay(kindId) {
     const badge = computeSignalBadge(w);
     signalEl.textContent = badge ? badge.text : '';
     signalEl.style.display = badge ? 'inline-block' : 'none';
-    if (badge) signalEl.style.color = badge.color;
+    if (badge) {
+      signalEl.style.color = badge.color;
+      signalEl.title = badge.tooltip;
+    }
   }
   if (devEl) {
     const valuation = computeValuationBadge(w);
     devEl.textContent = valuation ? `평균대비 ${valuation.text}` : '평균대비 —';
+    devEl.style.color = valuation ? valuation.color : 'var(--dim)';
   }
   if (depleteEl) {
     const txt = computeDepletionBadgeText(w);
@@ -3903,6 +4291,7 @@ function patchWatchItemDisplay(kindId) {
     projEl.textContent = proj ? proj.text : '예상(15분) —';
     projEl.style.color = proj ? proj.color : 'var(--dim)';
   }
+  renderCraftCalc(); // 이 아이템이 제작 계산기 재료로 쓰이고 있을 수 있으니 가격 갱신 때마다 같이 재계산
 }
 
 function renderWatchList() {
@@ -3913,6 +4302,8 @@ function renderWatchList() {
   if (!watchList.length) {
     box.innerHTML = '';
     saveWatchStateToStorage();
+    renderCraftMaterialRows();
+    renderCraftCalc();
     return;
   }
   box.innerHTML = getSortedWatchList().map(w => {
@@ -3931,6 +4322,7 @@ function renderWatchList() {
     const signalBadge = computeSignalBadge(w);
     const valuationBadge = computeValuationBadge(w);
     const devTxt = valuationBadge ? `평균대비 ${valuationBadge.text}` : '평균대비 —';
+    const devColor = valuationBadge ? valuationBadge.color : 'var(--dim)';
     const depleteBadgeTxt = computeDepletionBadgeText(w);
     const projBadge = computeProjectedBadgeText(w);
     const suggestedPct = computeSuggestedThresholdPct(w.kind_id);
@@ -3941,21 +4333,24 @@ function renderWatchList() {
         <div class="watch-item">
           <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${w.name}</span>
           <span class="w-price" id="wPrice_${w.kind_id}">${priceTxt}</span>
-          <span class="w-valuation" id="wSignal_${w.kind_id}" title="여러 지표를 합친 참고용 점수 — 양수(초록)=사기 좋음, 음수(빨강)=팔기 좋음. 확정 신호는 아님" style="color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
+          <span class="w-valuation" id="wSignal_${w.kind_id}" title="${(signalBadge ? signalBadge.tooltip : '').replace(/"/g, '&quot;')}" style="color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
+          <span class="w-valuation" id="wDevPct_${w.kind_id}" title="현재가가 이 아이템의 최근 평균가 대비 몇 % 위/아래인지" style="color:${devColor};">${devTxt}</span>
+          <span class="w-valuation" id="wProjected_${w.kind_id}" title="최근 짧은 추세를 단순 연장한 참고치일 뿐, 실제 가격을 보장하지 않아요" style="color:${projBadge ? projBadge.color : 'var(--dim)'};">${projBadge ? projBadge.text : '예상(15분) —'}</span>
           <span class="w-count" id="wCount_${w.kind_id}">${countTxt}</span>
           <span class="w-updated" id="wUpdated_${w.kind_id}">${timeAgoText(w.lastUpdated)}</span>
           <span class="w-deplete" id="wDeplete_${w.kind_id}" style="display:${depleteBadgeTxt ? 'inline-block' : 'none'};">${depleteBadgeTxt || ''}</span>
           ${firedCount ? `<span class="alert-hit">🔔 ${firedCount}</span>` : ''}
+        </div>
+        <div class="watch-item-quickbtns">
           <button class="ghost${isFocus ? ' toggle-on' : ''}" onclick="toggleFocusWatch(${w.kind_id})" title="집중 감시 — 최대 ${FOCUS_MAX_ITEMS}개까지 동시에 ${FOCUS_INTERVAL_MS / 1000}초마다 갱신 (현재 ${focusKindIds.size}/${FOCUS_MAX_ITEMS})">🎯${isFocus ? ' 집중감시중' : ''}</button>
-          <button class="ghost" onclick="toggleAlertPanel(${w.kind_id})">알림${alerts.length ? ` (${alerts.length})` : ''}</button>
+          <button class="ghost${w.alertPanelOpen ? ' toggle-on' : ''}" onclick="toggleAlertPanel(${w.kind_id})">${w.alertPanelOpen ? '▾' : '▸'} 상세${alerts.length ? ` (알림 ${alerts.length})` : ''}</button>
           <button class="ghost" onclick="removeWatchItem(${w.kind_id})">삭제</button>
         </div>
+        ${w.alertPanelOpen ? `
         <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
           <span id="wRange1h_${w.kind_id}">${range1hTxt}</span>
           <span id="wRange24h_${w.kind_id}">${rangeTxt}</span>
           <span id="wCountChg24h_${w.kind_id}" style="color:${countChgColor};">${countChgTxt}</span>
-          <span id="wDevPct_${w.kind_id}">${devTxt}</span>
-          <span id="wProjected_${w.kind_id}" title="최근 짧은 추세를 단순 연장한 참고치일 뿐, 실제 가격을 보장하지 않아요" style="color:${projBadge ? projBadge.color : 'var(--dim)'};">${projBadge ? projBadge.text : '예상(15분) —'}</span>
         </div>
         <div class="watch-item-toggles">
           <button class="ghost${w.newListingAlert ? ' toggle-on listing' : ''}" onclick="toggleNewListingAlert(${w.kind_id})" title="매물 수량이 늘면(=신규 등록) 알림">🆕 신규매물${w.newListingAlert ? ' 감지중' : ''}</button>
@@ -3967,10 +4362,12 @@ function renderWatchList() {
           <button class="ghost${w.listingDropAlert ? ' toggle-on dropwarn' : ''}" onclick="toggleListingDropAlert(${w.kind_id})" title="매물 수량이 급격히 줄면(품귀) 알림 — 팔 타이밍 신호">⚠ 품귀${w.listingDropAlert ? ' 감지중' : ''}</button>
           ${w.listingDropAlert ? `<input type="number" min="1" step="1" value="${w.listingDropThreshold || 1}" title="최소 몇 개 이상 줄어야 알림을 울릴지" onchange="setListingDropThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">개↓</span>` : ''}
         </div>
-        ${w.alertPanelOpen ? renderAlertPanelHtml(w.kind_id) : ''}
+        ${renderAlertPanelHtml(w.kind_id)}` : ''}
       </div>`;
   }).join('');
   saveWatchStateToStorage();
+  renderCraftMaterialRows();
+  renderCraftCalc();
 }
 
 </script>

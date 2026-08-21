@@ -100,11 +100,17 @@
   .watch-item button.toggle-on.lowprice, .watch-item-toggles button.toggle-on.lowprice{background:#38BDF8; color:#04202b; border-color:#38BDF8; font-weight:700;}
   .watch-item button.toggle-on.highprice, .watch-item-toggles button.toggle-on.highprice{background:var(--accent); color:#1a1208; border-color:var(--accent); font-weight:700;}
   .watch-item button.toggle-on.dropwarn, .watch-item-toggles button.toggle-on.dropwarn{background:var(--down); color:#2a0906; border-color:var(--down); font-weight:700;}
+  .watch-item-quickbtns button.detail-btn{border-color:var(--accent); color:var(--accent); font-weight:700;}
+  .watch-item-quickbtns button.detail-btn.toggle-on{background:var(--accent); color:#1a1208;}
+  .tools-tabbar{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:10px;}
+  .tools-tab-btn{background:transparent; color:var(--dim); border:1px solid var(--line); border-radius:6px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer;}
+  .tools-tab-btn.active{background:var(--accent); color:#1a1208; border-color:var(--accent);}
   .watch-item-toggles{display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:0 10px 8px;}
   .watch-item-toggles button{padding:3px 7px; font-size:11.5px;}
   .watch-item-toggles input[type=number]{width:52px; padding:3px 6px; font-size:11.5px;}
   .watch-item-toggles select{padding:3px 4px; font-size:11.5px;}
   .w-valuation{font-weight:700; padding:1px 6px; border-radius:4px; background:var(--panel);}
+  .w-signal-primary{font-weight:800; font-size:13.5px; padding:2px 8px; border-radius:5px; background:var(--panel);}
   .w-deplete{color:var(--down); font-weight:700; white-space:nowrap;}
   .watch-list-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:10px; align-items:start;}
   @media (max-width:480px){ .watch-list-grid{grid-template-columns:1fr;} }
@@ -248,171 +254,161 @@
 
     <div class="section-divider"></div>
 
-    <details id="craftDetails">
-      <summary>🔨 제작 손익 계산기</summary>
+    <details id="toolsDetails">
+      <summary>🛠 도구 모음 <span class="hint" style="margin:0;">(제작 계산기 · 알림 방식 · 설정 · 적중률 · 가이드)</span></summary>
       <div class="section-body">
-        <div class="hint" id="craftFeeHint" style="margin:0 0 8px;">
-          재료는 한번 사면 되팔 수 없지만, 제작한 장비는 팔 수 있어요. 재료는 감시 목록에 없어도 이름으로 바로 검색해서 불러올 수 있어요.
-          "장비 예상 판매가"까지 넣으면 판매 시 수수료를 뗀 실수령액 기준으로, 재료 그대로 파는 것보다 제작하는 게 이득인지 계산해줘요.
+        <div class="tools-tabbar">
+          <button type="button" class="tools-tab-btn active" data-tab="craft" onclick="switchToolsTab('craft')">🔨 제작 계산기</button>
+          <button type="button" class="tools-tab-btn" data-tab="notify" onclick="switchToolsTab('notify')">🔔 알림 방식</button>
+          <button type="button" class="tools-tab-btn" data-tab="settings" onclick="switchToolsTab('settings')">⚙️ 설정/백업</button>
+          <button type="button" class="tools-tab-btn" data-tab="backtest" onclick="switchToolsTab('backtest')">📈 적중률</button>
+          <button type="button" class="tools-tab-btn" data-tab="faq" onclick="switchToolsTab('faq')">❓ 가이드</button>
         </div>
-        <div id="craftMaterialRows" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;"></div>
-        <button class="ghost" onclick="addCraftMaterialRow()">+ 재료 추가</button>
-        <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:10px; margin-top:10px;">
-          <span style="min-width:120px;">장비 예상 판매가</span>
-          <input type="number" id="craftEquipPrice" min="0" step="1" placeholder="예: 5000" oninput="renderCraftCalc()">
-          <span class="hint" style="margin:0;">(아직 안 만들었으면 비슷한 완제품 거래소 시세로 어림잡아도 돼요)</span>
+
+        <div id="tab-craft" class="tools-tab-panel">
+          <div class="hint" id="craftFeeHint" style="margin:0 0 8px;">
+            재료는 한번 사면 되팔 수 없지만, 제작한 장비는 팔 수 있어요. 재료는 감시 목록에 없어도 이름으로 바로 검색해서 불러올 수 있어요.
+            "장비 예상 판매가"까지 넣으면 판매 시 수수료를 뗀 실수령액 기준으로, 재료 그대로 파는 것보다 제작하는 게 이득인지 계산해줘요.
+          </div>
+          <div id="craftMaterialRows" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;"></div>
+          <button class="ghost" onclick="addCraftMaterialRow()">+ 재료 추가</button>
+          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:10px; margin-top:10px;">
+            <span style="min-width:120px;">장비 예상 판매가</span>
+            <input type="number" id="craftEquipPrice" min="0" step="1" placeholder="예: 5000" oninput="renderCraftCalc()" onchange="saveCraftStateToStorage()">
+            <span class="hint" style="margin:0;">(아직 안 만들었으면 비슷한 완제품 거래소 시세로 어림잡아도 돼요)</span>
+          </div>
+          <div id="craftResultBox" style="margin-top:10px; padding:12px 14px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; font-family:var(--mono); font-size:13.5px; display:none;"></div>
         </div>
-        <div id="craftResultBox" style="margin-top:10px; padding:12px 14px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; font-family:var(--mono); font-size:13.5px; display:none;"></div>
-      </div>
-    </details>
 
-    <div class="section-divider"></div>
-
-    <details id="notifyDetails">
-      <summary>🔔 알림 방식 설정</summary>
-      <div class="section-body">
-        <div class="watch-alert-panel" style="margin-left:0;">
-          <div class="watch-alert-form">
-            <span style="min-width:120px;">🖥 브라우저(윈도우) 알림</span>
-            <span class="hint" id="browserNotifyStatus" style="margin:0;">확인 중...</span>
-            <button class="ghost" id="enableBrowserNotifyBtn" onclick="requestBrowserNotifyPermission()">알림 켜기</button>
-          </div>
-          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
-            <span style="min-width:120px;">💬 카카오톡 (나에게 보내기)</span>
-            <span class="hint" id="kakaoStatus" style="margin:0;">미설정</span>
-          </div>
-          <div class="watch-alert-subform">
-            <input type="password" id="kakaoJsKey" placeholder="Kakao JavaScript 키" autocomplete="off">
-            <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('kakaoJsKey', this)" title="키 보이기/가리기">👁</button>
-            <input type="password" id="kakaoRestKey" placeholder="Kakao REST API 키" autocomplete="off">
-            <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('kakaoRestKey', this)" title="키 보이기/가리기">👁</button>
-            <button class="ghost" id="kakaoInitBtn" onclick="initKakao()">키 저장</button>
-            <button class="ghost" id="kakaoLoginBtn" onclick="kakaoLogin()" disabled>카카오 로그인</button>
-            <button class="ghost" id="kakaoTestBtn" onclick="kakaoSendTest()" disabled>테스트 전송</button>
-          </div>
-          <div class="hint">
-            Kakao Developers(developers.kakao.com) → 내 애플리케이션 → 앱 키에서 <b>JavaScript 키</b>와 <b>REST API 키</b>를 둘 다 여기에 입력하세요.
-            <b>플랫폼 키 → JavaScript 키 → JavaScript SDK 도메인</b>과 <b>앱 설정 → 카카오 로그인 → Redirect URI</b> 두 곳에 지금 이 페이지 주소(<code id="redirectUriHint"></code>)를 정확히 등록해야 로그인이 됩니다.
-            "카카오 로그인 → 동의항목"에서 "카카오톡 메시지 전송"을 사용 설정으로 켜둬야 합니다.
-          </div>
-          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
-            <span style="min-width:120px;">🌙 조용한 시간대</span>
-            <input type="checkbox" id="quietEnabled" onchange="saveQuietHours()">
-            <input type="time" id="quietStart" value="23:00" onchange="saveQuietHours()" style="width:90px;">
-            <span>~</span>
-            <input type="time" id="quietEnd" value="08:00" onchange="saveQuietHours()" style="width:90px;">
-          </div>
-          <div class="hint" style="margin:0;">이 시간대엔 카카오톡만 억제돼요 (브라우저 알림/소리는 그대로 울립니다).</div>
-          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
-            <span style="min-width:120px;">⏳ 동일 아이템 재알림 간격</span>
-            <input type="number" id="kakaoItemCooldownMinInput" value="30" min="0" step="5" style="width:70px;" onchange="saveKakaoItemCooldown()">
-            <span>분</span>
-          </div>
-          <div class="hint" style="margin:0;">한 아이템에 카톡이 한 번 가면, 이 시간 동안은 같은 아이템으로 조건이 다시 맞아도 카톡을 또 보내지 않아요 (0으로 두면 매번 전송). 브라우저 알림/소리는 이 설정과 무관하게 항상 울려요.</div>
-          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
-            <span style="min-width:120px;">🎯 종합 스코어 필터</span>
-            <input type="number" id="kakaoMinAbsScoreInput" value="0" min="0" max="100" step="5" style="width:70px;" onchange="saveKakaoMinAbsScore()">
-            <span>이상일 때만 카톡</span>
-          </div>
-          <div class="hint" style="margin:0;">개별 알림이 울려도 감시목록의 종합 신호 스코어(절대값)가 이 값보다 작으면 카톡은 건너뛰어요 (0=필터 안 함, 전부 전송). 진짜 중요한 신호만 폰으로 받고 싶을 때 올려보세요 — 역시 브라우저 알림/소리는 항상 그대로 울립니다.</div>
-          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
-            <button class="ghost" id="kakaoHistoryToggleBtn" onclick="toggleKakaoHistory()">📜 알림 이력 보기</button>
-            <span class="hint" id="kakaoQuotaHint" style="margin:0;"></span>
-          </div>
-          <div id="kakaoHistoryPanel" style="display:none; max-height:220px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px;"></div>
-        </div>
-      </div>
-    </details>
-
-    <div class="section-divider"></div>
-
-    <details id="settingsDetails">
-      <summary>⚙️ 설정 / 백업</summary>
-      <div class="section-body">
-        <div class="watch-alert-panel" style="margin-left:0;">
-          <div class="watch-alert-form">
-            <span style="min-width:120px;">⏱ 자동갱신 주기</span>
-            <select id="autoIntervalSel" onchange="saveAutoIntervalPref()">
-              <option value="60000">60초</option>
-              <option value="120000">2분</option>
-              <option value="300000">5분</option>
-            </select>
-            <span class="hint" style="margin:0;">감시 목록이 크거나 API 한도가 자주 걸리면 주기를 늘려보세요.</span>
-          </div>
-          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
-            <span style="min-width:120px;">💾 설정 백업</span>
-            <button class="ghost" onclick="exportSettings()">내보내기(JSON 저장)</button>
-            <button class="ghost" onclick="document.getElementById('importFileInput').click()">가져오기</button>
-            <input type="file" id="importFileInput" accept="application/json" style="display:none;" onchange="importSettings(this.files[0])">
-          </div>
-          <div class="hint" style="margin:0;">감시 목록·알림 설정·조용한 시간대 등을 파일로 저장해뒀다가, 브라우저를 바꾸거나 캐시가 날아갔을 때 불러올 수 있어요. (API 키·카카오 로그인 정보는 보안상 포함되지 않아요 — 새 기기에선 직접 입력해주세요.)</div>
-          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
-            <span style="min-width:120px;">🎨 이평선 스타일</span>
-          </div>
-          <div class="watch-alert-subform">
-            <span style="min-width:70px;">HMA 두께</span>
-            <input type="number" id="maStyleHmaWidth" value="4" min="0.5" step="0.1" style="width:60px;" onchange="saveMaStyle()">
-            <span style="min-width:70px;">TEMA 두께</span>
-            <input type="number" id="maStyleTemaWidth" value="2.6" min="0.5" step="0.1" style="width:60px;" onchange="saveMaStyle()">
-          </div>
-          <div class="watch-alert-subform">
-            <span style="min-width:70px;">선 명암</span>
-            <input type="number" id="maStyleLineOpacity" value="0.9" min="0.1" max="1" step="0.05" style="width:60px;" onchange="saveMaStyle()">
-            <span class="hint" style="margin:0;">(0=투명 ~ 1=불투명, HMA/TEMA 공통)</span>
-          </div>
-          <div class="watch-alert-subform">
-            <span style="min-width:70px;">HALO 두께</span>
-            <input type="number" id="maStyleHaloWidth" value="4" min="0" step="0.5" style="width:60px;" onchange="saveMaStyle()">
-            <span style="min-width:70px;">HALO 명암</span>
-            <input type="number" id="maStyleHaloOpacity" value="0.6" min="0" max="1" step="0.05" style="width:60px;" onchange="saveMaStyle()">
-          </div>
-          <div class="hint" style="margin:0;">HALO는 이평선 뒤에 깔리는 검은 외곽선이에요 (0으로 두면 외곽선 없이 선만 나와요). 값 바꾸면 차트에 바로 반영돼요.</div>
-          <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
-            <span style="min-width:120px;">🔁 API 키 로테이션</span>
-            <button type="button" class="ghost key-eye" onclick="toggleExtraKeysVisibility(this)" title="키 보이기/가리기">👁</button>
-          </div>
-          <textarea id="extraApiKeys" rows="3" placeholder="위 API 키 말고 추가로 쓸 키들을 한 줄에 하나씩 붙여넣으세요" style="width:100%; font-family:monospace; font-size:12px; -webkit-text-security:disc;" onchange="saveExtraApiKeys()"></textarea>
-          <div class="hint" style="margin:0;" id="apiKeyPoolHint"></div>
-        </div>
-      </div>
-    </details>
-
-    <div class="section-divider"></div>
-
-    <details id="backtestDetails">
-      <summary>📈 알림 적중률 되돌아보기</summary>
-      <div class="section-body">
-        <div class="watch-alert-panel" style="margin-left:0;">
-          <div class="hint" style="margin:0;">
-            ⬇저가하락·⬆저가상승·⚠품귀·💰목표가 알림이 울리면, 그 시점 가격을 "예측"으로 보고
-            30분 뒤 실제 가격과 비교해서 자동으로 적중 여부를 기록해요. 이 업데이트 이후 울린
-            알림부터 쌓이기 시작합니다.
-          </div>
-          <div class="watch-alert-form">
-            <span class="hint" id="alertOutcomeSummary" style="margin:0;">아직 판정된 알림이 없어요.</span>
-            <button class="ghost" onclick="clearAlertOutcomeLog()">기록 초기화</button>
-            <button class="ghost" onclick="bulkApplySuggestedThresholds()" title="변동폭(%) 설정이 0(기본값)으로 남아있는 아이템에, 각자의 최근 변동성 기반 추천값을 한 번에 채워넣습니다. 야생·원념·파동처럼 좁은 범위에서 잔움직임에도 알림이 울리는 아이템들의 노이즈를 줄여 적중률을 올리는 데 도움이 됩니다.">📊 감시 목록에 추천 임계값 일괄 적용</button>
-          </div>
-          <div id="alertOutcomePanel" style="max-height:260px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px;">
-            <div class="hint" style="margin:0;">알림이 울리고 30분이 지나면 여기에 결과가 쌓여요.</div>
+        <div id="tab-notify" class="tools-tab-panel" style="display:none;">
+          <div class="watch-alert-panel" style="margin-left:0;">
+            <div class="watch-alert-form">
+              <span style="min-width:120px;">🖥 브라우저(윈도우) 알림</span>
+              <span class="hint" id="browserNotifyStatus" style="margin:0;">확인 중...</span>
+              <button class="ghost" id="enableBrowserNotifyBtn" onclick="requestBrowserNotifyPermission()">알림 켜기</button>
+            </div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <span style="min-width:120px;">💬 카카오톡 (나에게 보내기)</span>
+              <span class="hint" id="kakaoStatus" style="margin:0;">미설정</span>
+            </div>
+            <div class="watch-alert-subform">
+              <input type="password" id="kakaoJsKey" placeholder="Kakao JavaScript 키" autocomplete="off">
+              <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('kakaoJsKey', this)" title="키 보이기/가리기">👁</button>
+              <input type="password" id="kakaoRestKey" placeholder="Kakao REST API 키" autocomplete="off">
+              <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('kakaoRestKey', this)" title="키 보이기/가리기">👁</button>
+              <button class="ghost" id="kakaoInitBtn" onclick="initKakao()">키 저장</button>
+              <button class="ghost" id="kakaoLoginBtn" onclick="kakaoLogin()" disabled>카카오 로그인</button>
+              <button class="ghost" id="kakaoTestBtn" onclick="kakaoSendTest()" disabled>테스트 전송</button>
+            </div>
+            <div class="hint">
+              Kakao Developers(developers.kakao.com) → 내 애플리케이션 → 앱 키에서 <b>JavaScript 키</b>와 <b>REST API 키</b>를 둘 다 여기에 입력하세요.
+              <b>플랫폼 키 → JavaScript 키 → JavaScript SDK 도메인</b>과 <b>앱 설정 → 카카오 로그인 → Redirect URI</b> 두 곳에 지금 이 페이지 주소(<code id="redirectUriHint"></code>)를 정확히 등록해야 로그인이 됩니다.
+              "카카오 로그인 → 동의항목"에서 "카카오톡 메시지 전송"을 사용 설정으로 켜둬야 합니다.
+            </div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <span style="min-width:120px;">🌙 조용한 시간대</span>
+              <input type="checkbox" id="quietEnabled" onchange="saveQuietHours()">
+              <input type="time" id="quietStart" value="23:00" onchange="saveQuietHours()" style="width:90px;">
+              <span>~</span>
+              <input type="time" id="quietEnd" value="08:00" onchange="saveQuietHours()" style="width:90px;">
+            </div>
+            <div class="hint" style="margin:0;">이 시간대엔 카카오톡만 억제돼요 (브라우저 알림/소리는 그대로 울립니다).</div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <span style="min-width:120px;">⏳ 동일 아이템 재알림 간격</span>
+              <input type="number" id="kakaoItemCooldownMinInput" value="30" min="0" step="5" style="width:70px;" onchange="saveKakaoItemCooldown()">
+              <span>분</span>
+            </div>
+            <div class="hint" style="margin:0;">한 아이템에 카톡이 한 번 가면, 이 시간 동안은 같은 아이템으로 조건이 다시 맞아도 카톡을 또 보내지 않아요 (0으로 두면 매번 전송). 브라우저 알림/소리는 이 설정과 무관하게 항상 울려요.</div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <span style="min-width:120px;">🎯 종합 스코어 필터</span>
+              <input type="number" id="kakaoMinAbsScoreInput" value="0" min="0" max="100" step="5" style="width:70px;" onchange="saveKakaoMinAbsScore()">
+              <span>이상일 때만 카톡</span>
+            </div>
+            <div class="hint" style="margin:0;">개별 알림이 울려도 감시목록의 종합 신호 스코어(절대값)가 이 값보다 작으면 카톡은 건너뛰어요 (0=필터 안 함, 전부 전송). 진짜 중요한 신호만 폰으로 받고 싶을 때 올려보세요 — 역시 브라우저 알림/소리는 항상 그대로 울립니다.</div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <button class="ghost" id="kakaoHistoryToggleBtn" onclick="toggleKakaoHistory()">📜 알림 이력 보기</button>
+              <span class="hint" id="kakaoQuotaHint" style="margin:0;"></span>
+            </div>
+            <div id="kakaoHistoryPanel" style="display:none; max-height:220px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px;"></div>
           </div>
         </div>
-      </div>
-    </details>
 
-    <div class="section-divider"></div>
+        <div id="tab-settings" class="tools-tab-panel" style="display:none;">
+          <div class="watch-alert-panel" style="margin-left:0;">
+            <div class="watch-alert-form">
+              <span style="min-width:120px;">⏱ 자동갱신 주기</span>
+              <select id="autoIntervalSel" onchange="saveAutoIntervalPref()">
+                <option value="60000">60초</option>
+                <option value="120000">2분</option>
+                <option value="300000">5분</option>
+              </select>
+              <span class="hint" style="margin:0;">감시 목록이 크거나 API 한도가 자주 걸리면 주기를 늘려보세요.</span>
+            </div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <span style="min-width:120px;">💾 설정 백업</span>
+              <button class="ghost" onclick="exportSettings()">내보내기(JSON 저장)</button>
+              <button class="ghost" onclick="document.getElementById('importFileInput').click()">가져오기</button>
+              <input type="file" id="importFileInput" accept="application/json" style="display:none;" onchange="importSettings(this.files[0])">
+            </div>
+            <div class="hint" style="margin:0;">감시 목록·알림 설정·조용한 시간대 등을 파일로 저장해뒀다가, 브라우저를 바꾸거나 캐시가 날아갔을 때 불러올 수 있어요. (API 키·카카오 로그인 정보는 보안상 포함되지 않아요 — 새 기기에선 직접 입력해주세요.)</div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <span style="min-width:120px;">🎨 이평선 스타일</span>
+            </div>
+            <div class="watch-alert-subform">
+              <span style="min-width:70px;">HMA 두께</span>
+              <input type="number" id="maStyleHmaWidth" value="4" min="0.5" step="0.1" style="width:60px;" onchange="saveMaStyle()">
+              <span style="min-width:70px;">TEMA 두께</span>
+              <input type="number" id="maStyleTemaWidth" value="2.6" min="0.5" step="0.1" style="width:60px;" onchange="saveMaStyle()">
+            </div>
+            <div class="watch-alert-subform">
+              <span style="min-width:70px;">선 명암</span>
+              <input type="number" id="maStyleLineOpacity" value="0.9" min="0.1" max="1" step="0.05" style="width:60px;" onchange="saveMaStyle()">
+              <span class="hint" style="margin:0;">(0=투명 ~ 1=불투명, HMA/TEMA 공통)</span>
+            </div>
+            <div class="watch-alert-subform">
+              <span style="min-width:70px;">HALO 두께</span>
+              <input type="number" id="maStyleHaloWidth" value="4" min="0" step="0.5" style="width:60px;" onchange="saveMaStyle()">
+              <span style="min-width:70px;">HALO 명암</span>
+              <input type="number" id="maStyleHaloOpacity" value="0.6" min="0" max="1" step="0.05" style="width:60px;" onchange="saveMaStyle()">
+            </div>
+            <div class="hint" style="margin:0;">HALO는 이평선 뒤에 깔리는 검은 외곽선이에요 (0으로 두면 외곽선 없이 선만 나와요). 값 바꾸면 차트에 바로 반영돼요.</div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <span style="min-width:120px;">🔁 API 키 로테이션</span>
+              <button type="button" class="ghost key-eye" onclick="toggleExtraKeysVisibility(this)" title="키 보이기/가리기">👁</button>
+            </div>
+            <textarea id="extraApiKeys" rows="3" placeholder="위 API 키 말고 추가로 쓸 키들을 한 줄에 하나씩 붙여넣으세요" style="width:100%; font-family:monospace; font-size:12px; -webkit-text-security:disc;" onchange="saveExtraApiKeys()"></textarea>
+            <div class="hint" style="margin:0;" id="apiKeyPoolHint"></div>
+          </div>
+        </div>
 
-    <details id="faqDetails">
-      <summary>❓ 처음 쓰시나요? (설정 가이드)</summary>
-      <div class="section-body">
-        <div class="watch-alert-panel" style="margin-left:0;">
-          <div class="hint" style="margin:0;">
-            <b>1. 모비라이프 API 키</b> — 화면 위쪽 "API 키" 칸에 본인 키를 입력하세요. 없으면 발급처에서 먼저 받아야 해요.<br><br>
-            <b>2. 아이템 감시하기</b> — 아이템 이름을 검색해 [조회]를 누르면 자동으로 감시 목록에 추가돼요. 목록에서 아이템을 클릭하면 그 아이템 차트로 바로 이동해요.<br><br>
-            <b>3. 브라우저 알림</b> — "🔔 알림 방식 설정"에서 "알림 켜기"를 누르면 조건 도달 시 윈도우/맥 알림이 떠요. 카카오톡 설정 없이도 이것만으로 충분히 쓸 수 있어요.<br><br>
-            <b>4. 카카오톡 알림(선택)</b> — 폰으로도 받고 싶으면 Kakao Developers(developers.kakao.com)에서 앱을 만들고 JavaScript 키·REST API 키를 위 칸에 입력하세요. 이때 <b>플랫폼 도메인</b>과 <b>Redirect URI</b>를 지금 이 페이지 주소로 정확히 등록해야 하고, <b>동의항목에서 "카카오톡 메시지 전송"</b>을 켜둬야 해요. 이 단계가 좀 까다로우니, 안 되면 편하게 다시 물어보세요.<br><br>
-            <b>5. 가격 알림 설정</b> — 감시 목록에서 "알림" 버튼을 누르면 목표가/퍼센트/트레일링(고점 대비 하락) 중 원하는 방식으로 조건을 걸 수 있어요.<br><br>
-            <b>6. 탭을 열어두세요</b> — 이 앱은 브라우저 탭이 열려 있어야 감시가 돌아가요. 탭을 닫거나 컴퓨터가 잠자기 모드로 들어가면 그 순간부터 멈춰요.
+        <div id="tab-backtest" class="tools-tab-panel" style="display:none;">
+          <div class="watch-alert-panel" style="margin-left:0;">
+            <div class="hint" style="margin:0;">
+              ⬇저가하락·⬆저가상승·⚠품귀·💰목표가 알림이 울리면, 그 시점 가격을 "예측"으로 보고
+              30분 뒤 실제 가격과 비교해서 자동으로 적중 여부를 기록해요. 이 업데이트 이후 울린
+              알림부터 쌓이기 시작합니다.
+            </div>
+            <div class="watch-alert-form">
+              <span class="hint" id="alertOutcomeSummary" style="margin:0;">아직 판정된 알림이 없어요.</span>
+              <button class="ghost" onclick="clearAlertOutcomeLog()">기록 초기화</button>
+              <button class="ghost" onclick="bulkApplySuggestedThresholds()" title="변동폭(%) 설정이 0(기본값)으로 남아있는 아이템에, 각자의 최근 변동성 기반 추천값을 한 번에 채워넣습니다. 야생·원념·파동처럼 좁은 범위에서 잔움직임에도 알림이 울리는 아이템들의 노이즈를 줄여 적중률을 올리는 데 도움이 됩니다.">📊 감시 목록에 추천 임계값 일괄 적용</button>
+            </div>
+            <div id="alertOutcomePanel" style="max-height:260px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px;">
+              <div class="hint" style="margin:0;">알림이 울리고 30분이 지나면 여기에 결과가 쌓여요.</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="tab-faq" class="tools-tab-panel" style="display:none;">
+          <div class="watch-alert-panel" style="margin-left:0;">
+            <div class="hint" style="margin:0;">
+              <b>1. 모비라이프 API 키</b> — 화면 위쪽 "API 키" 칸에 본인 키를 입력하세요. 없으면 발급처에서 먼저 받아야 해요.<br><br>
+              <b>2. 아이템 감시하기</b> — 아이템 이름을 검색해 [조회]를 누르면 자동으로 감시 목록에 추가돼요. 목록에서 아이템을 클릭하면 그 아이템 차트로 바로 이동해요.<br><br>
+              <b>3. 브라우저 알림</b> — "🔔 알림 방식"에서 "알림 켜기"를 누르면 조건 도달 시 윈도우/맥 알림이 떠요. 카카오톡 설정 없이도 이것만으로 충분히 쓸 수 있어요.<br><br>
+              <b>4. 카카오톡 알림(선택)</b> — 폰으로도 받고 싶으면 Kakao Developers(developers.kakao.com)에서 앱을 만들고 JavaScript 키·REST API 키를 위 칸에 입력하세요. 이때 <b>플랫폼 도메인</b>과 <b>Redirect URI</b>를 지금 이 페이지 주소로 정확히 등록해야 하고, <b>동의항목에서 "카카오톡 메시지 전송"</b>을 켜둬야 해요. 이 단계가 좀 까다로우니, 안 되면 편하게 다시 물어보세요.<br><br>
+              <b>5. 가격 알림 설정</b> — 감시 목록에서 "상세"를 누르면 목표가/퍼센트/트레일링(고점 대비 하락) 중 원하는 방식으로 조건을 걸 수 있어요.<br><br>
+              <b>6. 탭을 열어두세요</b> — 이 앱은 브라우저 탭이 열려 있어야 감시가 돌아가요. 탭을 닫거나 컴퓨터가 잠자기 모드로 들어가면 그 순간부터 멈춰요.
+            </div>
           </div>
         </div>
       </div>
@@ -569,6 +565,8 @@ const LS_KEYS = {
   watchSort: 'ggMarket.watchSort',
   alertOutcomeLog: 'ggMarket.alertOutcomeLog',
   pendingAlertEvals: 'ggMarket.pendingAlertEvals',
+  craftMaterialRows: 'ggMarket.craftMaterialRows',
+  craftEquipPrice: 'ggMarket.craftEquipPrice',
 };
 
 // 카카오 "나에게 보내기"는 기본 앱 기준 1일 호출 횟수 제한이 있다(보통 100회).
@@ -598,9 +596,14 @@ function slimWatchItem(w) {
     kind_id: w.kind_id, name: w.name,
     newListingAlert: !!w.newListingAlert, newListingThreshold: w.newListingThreshold || 1,
     lowestPriceAlert: !!w.lowestPriceAlert, lowestPriceThresholdPct: w.lowestPriceThresholdPct || 0,
-    lowestPriceConfirm: w.lowestPriceConfirm || 1,
+    // confirm 값은 여기서 `|| 1`로 기본값을 채우지 않는다 — 그러면 "한 번도 안 만짐(undefined)"과
+    // "사용자가 일부러 1(즉시발동)을 고름"이 저장 시점에 똑같이 1로 뭉개져서 이후로 영영 구분이
+    // 안 된다. undefined는 JSON 저장/복원을 거쳐도 그대로 undefined로 남으므로, "아직 안 만짐"
+    // 여부는 bulkApplySuggestedThresholds()에서만 판단하고, 실제 사용(스트릭 비교, 드롭다운
+    // 표시)은 각 사용처에서 `w.lowestPriceConfirm || 1`처럼 그때그때 기본값을 적용한다.
+    lowestPriceConfirm: w.lowestPriceConfirm,
     highestPriceAlert: !!w.highestPriceAlert, highestPriceThresholdPct: w.highestPriceThresholdPct || 0,
-    highestPriceConfirm: w.highestPriceConfirm || 1,
+    highestPriceConfirm: w.highestPriceConfirm,
     listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
   };
 }
@@ -612,9 +615,9 @@ function restoreWatchItem(w) {
     lastUpdated: null, alertPanelOpen: false,
     newListingAlert: !!w.newListingAlert, newListingThreshold: w.newListingThreshold || 1,
     lowestPriceAlert: !!w.lowestPriceAlert, lowestPriceThresholdPct: w.lowestPriceThresholdPct || 0,
-    lowestPriceConfirm: w.lowestPriceConfirm || 1,
+    lowestPriceConfirm: w.lowestPriceConfirm, // slimWatchItem 주석 참고 — 기본값을 여기서 채우지 않음
     highestPriceAlert: !!w.highestPriceAlert, highestPriceThresholdPct: w.highestPriceThresholdPct || 0,
-    highestPriceConfirm: w.highestPriceConfirm || 1,
+    highestPriceConfirm: w.highestPriceConfirm,
     listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
     depletionEtaMin: null,
   };
@@ -953,6 +956,7 @@ document.getElementById('zoomResetBtn').addEventListener('click', resetZoom);
 // 새로고침(F5)해도 API 키·감시 목록·알림·마지막 검색 상태가 남아있도록 먼저 복원한다.
 loadStateFromStorage();
 renderWatchList();
+loadCraftStateFromStorage(); // 제작 손익 계산기의 재료 조합 복원 (watchList/DOM 준비된 뒤 실행)
 
 // 카카오 로그인은 페이지를 통째로 떠났다가 돌아오는 방식이고, 창을 닫을 때도 마찬가지로
 // 스크립트가 갑자기 멈춘다. 평소엔 감시 목록이 바뀔 때마다 바로바로 저장되긴 하지만, 혹시
@@ -961,6 +965,7 @@ renderWatchList();
 window.addEventListener('beforeunload', () => {
   saveWatchStateToStorage();
   saveSearchStateToStorage();
+  saveCraftStateToStorage();
 });
 
 // 페이지를 열면 저장된 마지막 검색어(없으면 기본값 파동의 영혼석)를 자동 조회하고,
@@ -2366,11 +2371,12 @@ function addPriceAlert(kindId) {
   renderWatchList();
 }
 
-// 알림 패널의 공용 "재발동 여유폭(%)" 입력값을 읽어온다. 비워두면 0(=기존처럼 경계선에서 바로 재발동).
-function readMarginPct(kindId) {
-  const el = document.getElementById(`ap_margin_${kindId}`);
-  const v = el ? parseFloat(el.value) : 0;
-  return (!v || v < 0) ? 0 : v;
+// 알림 패널의 "재발동 여유폭" — 예전엔 아이템마다 직접 입력하게 했지만, 대부분 그냥 기본값을
+// 그대로 뒀고 의미도 잘 안 와닿는 옵션이라 UI에서 없앴다. 대신 항상 작은 값(0.5%)을 내부적으로
+// 적용해, 가격이 경계선 바로 근처에서 미세하게 오르내릴 때 알림/배지가 깜빡이는 것만 막아준다.
+const DEFAULT_REARM_MARGIN_PCT = 0.5;
+function readMarginPct() {
+  return DEFAULT_REARM_MARGIN_PCT;
 }
 
 function removePriceAlert(kindId, id) {
@@ -2388,6 +2394,17 @@ function rearmPriceAlert(kindId, id) {
   const list = alertsByKind[kindId];
   const a = list && list.find(a => a.id === id);
   if (a) { a.fired = false; renderWatchList(); }
+}
+
+// "🛠 도구 모음" 안의 5개 탭(제작 계산기/알림 방식/설정 백업/적중률/가이드) 전환.
+// 탭 각각을 <details>로 따로 쌓아두면 스크롤이 길어지길래, 하나로 묶고 탭 버튼으로만 전환한다.
+function switchToolsTab(tabName) {
+  document.querySelectorAll('.tools-tab-panel').forEach(panel => {
+    panel.style.display = (panel.id === `tab-${tabName}`) ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tools-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
 }
 
 function toggleAlertPanel(kindId) {
@@ -2408,12 +2425,9 @@ function renderAlertPanelHtml(kindId) {
           : a.type === 'trend_reversal'
           ? `📐 TEMA ${DIR_LABEL[a.direction] || '추세 전환'}`
           : `💰 ${a.price.toLocaleString()} ${a.dir === 'above' ? '이상' : '이하'}`;
-        const marginLabel = (a.type === 'threshold' && a.marginPct)
-          ? `<span class="note" style="color:var(--accent, #3b82f6); font-weight:700;">🎚 여유폭 ±${a.marginPct}%</span>`
-          : (a.type === 'threshold' ? `<span class="note" style="color:var(--dim);">여유폭 없음</span>` : '');
         return `
         <li class="alert-item${a.fired ? ' fired' : ''}">
-          <span class="txt">${kindLabel}${a.fired ? '<span class="alert-hit">● 도달함</span>' : ''}${a.note ? `<span class="note">${a.note}</span>` : ''}${marginLabel}</span>
+          <span class="txt">${kindLabel}${a.fired ? '<span class="alert-hit">● 도달함</span>' : ''}${a.note ? `<span class="note">${a.note}</span>` : ''}</span>
           ${a.fired && a.type !== 'trailing' && a.type !== 'trend_reversal' ? `<button class="ghost" onclick="rearmPriceAlert(${kindId}, ${a.id})">다시 감시</button>` : ''}
           <button class="ghost" onclick="removePriceAlert(${kindId}, ${a.id})">삭제</button>
         </li>
@@ -2444,26 +2458,12 @@ function renderAlertPanelHtml(kindId) {
         <button class="ghost" onclick="addTrailingAlert(${kindId})">트레일링 추가</button>
       </div>
       <div class="watch-alert-subform">
-        <span>또는 TEMA</span>
-        <select id="ap_trend_dir_${kindId}">
-          <option value="peak">상승→하락 꺾일 때 (팔 타이밍)</option>
-          <option value="trough">하락→상승 꺾일 때 (살 타이밍)</option>
-          <option value="any">둘 다</option>
-        </select>
-        <button class="ghost" onclick="addTrendReversalAlert(${kindId})">추세전환 추가</button>
-      </div>
-      <div class="watch-alert-subform">
         <span>🏷 적정 등록가 추천</span>
         <span style="color:var(--accent); font-weight:700;">${(() => {
-          const s = computePercentileForKind(kindId, 80);
-          return s === null ? '데이터 부족' : `${Math.round(s).toLocaleString()} (최근 상위 20%)`;
+          const s = computeSuggestedListingPrice(kindId);
+          return s === null ? '데이터 부족' : `${Math.round(s).toLocaleString()} (수수료 제외 최근 7일 상위 15%)`;
         })()}</span>
         <button class="ghost" onclick="addSuggestedPriceAlert(${kindId})">이 가격 이상되면 알림 추가</button>
-      </div>
-      <div class="watch-alert-subform">
-        <span>🎚 재발동 여유폭 ±</span>
-        <input type="number" id="ap_margin_${kindId}" placeholder="0" min="0" step="0.1" style="width:60px;">
-        <span>% (경계선 근처에서 알림이 반복되는 게 싫으면 설정 — 가격/평균 알림에만 적용)</span>
       </div>
       <ul style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px;">${itemsHtml}</ul>
     </div>`;
@@ -2739,7 +2739,11 @@ function toggleKakaoHistory() {
 }
 
 // 나에게 보내기.
-// opts: { kindId, itemName, skipQuiet, buttonTitle }
+// opts: { kindId, itemName, skipQuiet, buttonTitle, cooldownKindIds }
+// cooldownKindIds: 전송이 "실제로 성공"했을 때만 아이템별 쿨다운을 걸어줄 kind_id 목록.
+// (조용한 시간대·토큰 만료·API 오류 등으로 실패한 경우엔 쿨다운을 걸지 않아야, 그 다음
+// 기회에 다시 시도할 수 있다 — queueKakaoAlert가 "큐에 넣는 시점"에 미리 쿨다운을 걸어버리면
+// 실패해도 이미 쿨다운이 소모돼서 정작 성공했어야 할 다음 알림까지 조용히 묻혀버리는 문제가 있었음.)
 async function sendKakaoMemo(title, body, opts) {
   opts = opts || {};
   const text = `${title}\n${body}`;
@@ -2777,6 +2781,10 @@ async function sendKakaoMemo(title, body, opts) {
       updateKakaoStatus('✅ 전송 성공! 카카오톡을 확인해보세요');
       bumpKakaoQuota();
       logKakaoHistory({ status: 'sent', itemName: opts.itemName, text });
+      // 실제로 전송이 성공했을 때만 아이템별 쿨다운을 건다.
+      (opts.cooldownKindIds || []).forEach(id => {
+        kakaoItemCooldownUntil[id] = Date.now() + kakaoItemCooldownMs();
+      });
     }).catch(err => {
       console.error('[Kakao 전송 실패]', err);
       const detail = (err && (err.msg || err.error_description || err.error)) || JSON.stringify(err);
@@ -2828,12 +2836,22 @@ function queueKakaoAlert(kindId, title, body, itemName) {
   if (kindId !== null && kindId !== undefined) {
     const until = kakaoItemCooldownUntil[kindId] || 0;
     if (Date.now() < until) {
-      // 이 아이템은 최근에 이미 카톡이 갔음 — 브라우저 알림/소리는 notifyPriceAlert에서 이미
-      // 울렸으니, 여기서는 카톡만 조용히 건너뛴다.
+      // 이 아이템은 최근에 이미 카톡 전송이 "성공"했음 — 브라우저 알림/소리는 notifyPriceAlert에서
+      // 이미 울렸으니, 여기서는 카톡만 조용히 건너뛴다.
+      // (쿨다운은 여기서 걸지 않는다 — 실제 전송 성공 시점에 sendKakaoMemo에서 건다. 큐에 넣는
+      // 시점에 미리 걸면, 조용한 시간대·토큰 만료 등으로 전송이 실패해도 쿨다운만 소모돼서
+      // 정작 보냈어야 할 다음 알림까지 묻혀버리는 문제가 있었음.)
       logKakaoHistory({ status: 'skipped-cooldown', itemName, text: `${title}\n${body}`, detail: '동일 아이템 재알림 쿨다운 중' });
       return;
     }
-    kakaoItemCooldownUntil[kindId] = Date.now() + kakaoItemCooldownMs();
+    // 쿨다운을 미리 걸지 않으므로, 같은 배치 대기 중(아직 flush 전)에 같은 아이템으로 서로 다른
+    // 알림(예: 최저가하락 + 목표가도달)이 겹쳐 들어오면 큐에 중복으로 쌓일 수 있다. 그건 한 번의
+    // 배치 메시지 안에 같은 아이템이 두 줄로 겹쳐 나가는 것뿐이라 심각하진 않지만, 굳이 중복을
+    // 남길 이유는 없으므로 이미 대기 중인 같은 아이템은 건너뛴다(먼저 들어온 알림 내용이 우선).
+    if (kakaoQueue.some(q => q.kindId === kindId)) {
+      logKakaoHistory({ status: 'skipped-cooldown', itemName, text: `${title}\n${body}`, detail: '같은 배치 대기열에 이미 있음' });
+      return;
+    }
   }
 
   kakaoQueue.push({ kindId, title, body, itemName });
@@ -2857,9 +2875,12 @@ function flushKakaoQueue() {
   const batch = kakaoQueue;
   kakaoQueue = [];
 
+  // 실제 전송 성공 시에만 아이템별 쿨다운을 걸 대상 목록 (kindId 없는 테스트 알림 등은 제외)
+  const cooldownKindIds = [...new Set(batch.map(b => b.kindId).filter(id => id !== null && id !== undefined))];
+
   if (batch.length === 1) {
     const one = batch[0];
-    sendKakaoMemo(one.title, one.body, { kindId: one.kindId, itemName: one.itemName });
+    sendKakaoMemo(one.title, one.body, { kindId: one.kindId, itemName: one.itemName, cooldownKindIds });
     return;
   }
 
@@ -2871,7 +2892,7 @@ function flushKakaoQueue() {
   const title = `🔔 알림 ${batch.length}건 도달`;
   const body = lines.join('\n');
   // 여러 아이템이 섞여있을 때 딥링크는 첫 번째 아이템으로 이동 (가장 최근 발동 기준)
-  sendKakaoMemo(title, body, { kindId: batch[0].kindId, itemName: `${batch.length}개 아이템` });
+  sendKakaoMemo(title, body, { kindId: batch[0].kindId, itemName: `${batch.length}개 아이템`, cooldownKindIds });
 }
 
 function checkPriceAlerts(kindId, price, itemName) {
@@ -3365,20 +3386,11 @@ function computeAvgForKind(kindId) {
 // percentile=85면 "최근 시세 중 상위 15% 안에 드는 가격"을 반환. 신호 점수와 마찬가지로
 // 지난 시즌/패치 데이터는 지금과 무관하므로 최근 PERCENTILE_WINDOW_DAYS(7일) 창만 본다.
 function computePercentileForKind(kindId, percentile) {
-  const kindCache = historyCacheByKind[kindId];
-  if (!kindCache) return null;
-  const entries = Object.entries(kindCache).filter(([, e]) => e && e.histData && e.histData.points && e.histData.points.length);
-  if (!entries.length) return null;
-  entries.sort((a, b) => (Number(b[0]) || 0) - (Number(a[0]) || 0));
-  const entry = entries[0][1];
-  const cutoff = Date.now() - PERCENTILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  const closes = (entry.histData.points || [])
-    .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined && p.time && new Date(p.time).getTime() >= cutoff)
-    .map(p => p.close)
-    .sort((a, b) => a - b);
-  if (!closes.length) return null;
-  const idx = Math.min(closes.length - 1, Math.round((percentile / 100) * (closes.length - 1)));
-  return closes[idx];
+  const closes = getRecentClosesForKind(kindId);
+  if (!closes) return null;
+  const sorted = closes.slice().sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.round((percentile / 100) * (sorted.length - 1)));
+  return sorted[idx];
 }
 
 // 추천 등록가: "수수료(15%) 떼고도 최근 7일 시세 중 상위 15% 안에 드는" 가격을 역산해서
@@ -3418,10 +3430,46 @@ function addSuggestedPriceAlert(kindId) {
 //   - 제작 손익 = 장비 실수령액 - 재료비 합계
 // 재료는 감시 목록과 무관하게 이름으로 직접 검색해서 불러온다(감시 목록에 없어도 됨).
 // 이미 감시 중인 아이템이면 그 값을 재사용해 API 호출을 아낀다.
+// 재료 행/장비 예상가는 재료 조합 자체가 "설정"이라 새로고침해도 남아있어야 한다.
+// 가격(price)은 매번 최신으로 다시 조회하는 게 맞으므로 저장 대상에서 뺀다 — 이름·수량·
+// 확정된 kindId만 저장해두고, 복원 시 kindId가 있는 행은 가격을 다시 불러온다.
+function saveCraftStateToStorage() {
+  try {
+    const toSave = craftMaterialRows.map(r => ({ kindId: r.kindId, name: r.name, qty: r.qty }));
+    localStorage.setItem(LS_KEYS.craftMaterialRows, JSON.stringify(toSave));
+    const equipEl = document.getElementById('craftEquipPrice');
+    localStorage.setItem(LS_KEYS.craftEquipPrice, equipEl ? equipEl.value : '');
+  } catch (e) {}
+}
+
+function loadCraftStateFromStorage() {
+  try {
+    const saved = localStorage.getItem(LS_KEYS.craftMaterialRows);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        craftMaterialRows = parsed.filter(r => r && typeof r === 'object').map(r => ({
+          id: craftRowIdSeq++, kindId: r.kindId ?? null, name: r.name || '', qty: r.qty ?? 1,
+          price: null, soldOut: false, loading: false,
+        }));
+      }
+    }
+    const savedPrice = localStorage.getItem(LS_KEYS.craftEquipPrice);
+    const equipEl = document.getElementById('craftEquipPrice');
+    if (savedPrice && equipEl) equipEl.value = savedPrice;
+  } catch (e) { console.error('[복원 실패] 제작 손익 계산기', e); }
+
+  renderCraftMaterialRows();
+  renderCraftCalc();
+  // 확정돼 있던 재료들은 가격이 저장 대상이 아니므로, 복원 직후 최신가를 다시 불러온다.
+  craftMaterialRows.filter(r => r.kindId).forEach(r => fetchCraftMaterialPriceForRow(r.id));
+}
+
 function addCraftMaterialRow() {
   craftMaterialRows.push({ id: craftRowIdSeq++, kindId: null, name: '', qty: 1, price: null, soldOut: false, loading: false });
   renderCraftMaterialRows();
   renderCraftCalc();
+  saveCraftStateToStorage();
 }
 
 function removeCraftMaterialRow(rowId) {
@@ -3429,6 +3477,7 @@ function removeCraftMaterialRow(rowId) {
   hideCraftMaterialSuggestions(rowId);
   renderCraftMaterialRows();
   renderCraftCalc();
+  saveCraftStateToStorage();
 }
 
 function setCraftMaterialQty(rowId, val) {
@@ -3437,6 +3486,7 @@ function setCraftMaterialQty(rowId, val) {
   const n = parseFloat(val);
   row.qty = (!n || n < 0) ? 0 : n;
   renderCraftCalc();
+  saveCraftStateToStorage();
 }
 
 // 재료 이름을 타이핑하는 동안(디바운스 450ms) 매칭 아이템을 검색해 드롭다운으로 보여준다.
@@ -3451,9 +3501,10 @@ function onCraftMaterialInput(rowId, value) {
   row.soldOut = false;
   if (craftMatSuggestTimers[rowId]) clearTimeout(craftMatSuggestTimers[rowId]);
   const q = value.trim();
-  if (!q) { hideCraftMaterialSuggestions(rowId); renderCraftCalc(); return; }
+  if (!q) { hideCraftMaterialSuggestions(rowId); renderCraftCalc(); saveCraftStateToStorage(); return; }
   craftMatSuggestTimers[rowId] = setTimeout(() => fetchCraftMaterialSuggestions(rowId, q), 450);
   renderCraftCalc();
+  saveCraftStateToStorage();
 }
 
 async function fetchCraftMaterialSuggestions(rowId, query) {
@@ -3500,6 +3551,7 @@ function pickCraftMaterialSuggestion(rowId, kindId, name) {
   hideCraftMaterialSuggestions(rowId);
   renderCraftMaterialRows();
   fetchCraftMaterialPriceForRow(rowId);
+  saveCraftStateToStorage();
 }
 
 // 확정된 재료의 현재가를 불러온다. 감시 목록에 같은 아이템이 이미 있으면 그 값을 그대로
@@ -3680,21 +3732,11 @@ function addTrailingAlert(kindId) {
   renderWatchList();
 }
 
-// 추세전환 알림: 절대가나 %가 아니라 "TEMA선의 기울기가 방향을 바꾸는 순간"을 감지한다.
-// 자동갱신/집중감시로 가격을 받아올 때마다 최근 가격을 조금씩 쌓아서(recentClosesByKind) TEMA를
-// 계산하고, 그 기울기 부호가 뒤집히면(오르다 꺾여 내려가기 시작 / 내리다 꺾여 올라가기 시작) 발동한다.
-function addTrendReversalAlert(kindId) {
-  const dirSel = document.getElementById(`ap_trend_dir_${kindId}`);
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
-  if (!alertsByKind[kindId]) alertsByKind[kindId] = [];
-  alertsByKind[kindId].push({
-    id: alertIdSeq++, type: 'trend_reversal', direction: dirSel.value, lastSlope: null, fired: false,
-    note: '데이터가 조금 쌓여야 감지가 시작돼요',
-  });
-  renderWatchList();
-}
+// 추세전환 알림(추가 UI)은 제거됐다 — "꺾이는 순간"이 아니라 "꺾이고 나서 저점/고점에 도달한
+// 순간"을 원해서, 예상(15분)/범위/신호 배지로 충분하다고 판단해 UI만 뺐다. 다만 이 방식으로
+// 이미 등록해둔 알림이 있는 사용자를 위해 checkPriceAlerts의 trend_reversal 처리 로직과
+// removePriceAlert/rearmPriceAlert 등의 하위호환 코드는 그대로 남겨둔다 — 새로 만드는 경로만
+// (addTrendReversalAlert 함수와 그 UI)없앴다.
 
 // ---- 감시 목록 (여러 아이템 동시 확인) ----
 
@@ -4000,25 +4042,33 @@ function computeDepletionBadgeText(w) {
 // (예: 세공기가 작년 1300데카 → 지금 170~200데카, 강화재연소 촉매가 3000데카 → 지금
 // 600데카대). 이런 자릿수 단위의 국면 변화에서는 옛 데이터를 약하게라도 섞으면 안 되고
 // (이상치 하나가 백분위 전체를 왜곡할 수 있음), 아예 기간이 지나면 완전히 잘라내는 게
-// 맞다. 그래서 최근 일정 기간(기본 14일)이 지난 시세는 통째로 제외하고, 그 안의 시세만
+// 맞다. 그래서 최근 일정 기간(고정 7일)이 지난 시세는 통째로 제외하고, 그 안의 시세만
 // 가지고 지금 가격의 상대적 위치를 판단한다.
 const PERCENTILE_WINDOW_DAYS = 7; // 이보다 오래된 시세는 완전히 제외 — 패치 주기(1주)에 맞춤
 
-function computePricePercentileRank(kindId, price) {
-  if (price === null || price === undefined) return null;
+// historyCacheByKind에 캐시된 여러 기간(daysSel) 중 가장 길게 불러와둔 엔트리를 골라,
+// 그 안에서 PERCENTILE_WINDOW_DAYS(7일) 컷오프 안쪽의 종가만 추출해 반환한다.
+// (화면 상단 기간 선택 드롭다운과 무관하게 신호 계산은 항상 이 7일 고정 창만 봄.)
+// computePricePercentileRank / computePercentileForKind / computeSuggestedThresholdPct가
+// 공통으로 쓰는 로직이라 여기 한 곳에서만 관리한다.
+function getRecentClosesForKind(kindId) {
   const kindCache = historyCacheByKind[kindId];
   if (!kindCache) return null;
   const entries = Object.entries(kindCache).filter(([, e]) => e && e.histData && e.histData.points && e.histData.points.length);
   if (!entries.length) return null;
-  // 가장 길게 불러와둔 캐시를 재료로 쓰되, 실제로는 아래에서 최근 윈도우 밖의 시세는
-  // 전부 잘라내고 그 안의 것만 쓴다.
   entries.sort((a, b) => (Number(b[0]) || 0) - (Number(a[0]) || 0));
   const entry = entries[0][1];
   const cutoff = Date.now() - PERCENTILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const closes = (entry.histData.points || [])
     .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined && p.time && new Date(p.time).getTime() >= cutoff)
     .map(p => p.close);
-  if (!closes.length) return null;
+  return closes.length ? closes : null;
+}
+
+function computePricePercentileRank(kindId, price) {
+  if (price === null || price === undefined) return null;
+  const closes = getRecentClosesForKind(kindId);
+  if (!closes) return null;
   const countBelowOrEqual = closes.reduce((n, c) => n + (c <= price ? 1 : 0), 0);
   return (countBelowOrEqual / closes.length) * 100;
 }
@@ -4128,17 +4178,8 @@ function computeProjectedBadgeText(w) {
 // 신호 점수와 마찬가지로, 지난 시즌/지난 패치의 변동성은 지금과 무관하므로 최근
 // PERCENTILE_WINDOW_DAYS(7일) 창만 본다 — daysSel 선택값과 무관하게 고정.
 function computeSuggestedThresholdPct(kindId) {
-  const kindCache = historyCacheByKind[kindId];
-  if (!kindCache) return null;
-  const entries = Object.entries(kindCache).filter(([, e]) => e && e.histData && e.histData.points && e.histData.points.length);
-  if (!entries.length) return null;
-  entries.sort((a, b) => (Number(b[0]) || 0) - (Number(a[0]) || 0));
-  const entry = entries[0][1];
-  const cutoff = Date.now() - PERCENTILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  const closes = (entry.histData.points || [])
-    .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined && p.time && new Date(p.time).getTime() >= cutoff)
-    .map(p => p.close);
-  if (closes.length < 3) return null;
+  const closes = getRecentClosesForKind(kindId);
+  if (!closes || closes.length < 3) return null;
   const mean = closes.reduce((a, b) => a + b, 0) / closes.length;
   if (!mean) return null;
   const variance = closes.reduce((a, b) => a + (b - mean) ** 2, 0) / closes.length;
@@ -4179,8 +4220,10 @@ function bulkApplySuggestedThresholds() {
       if (suggested === null) { skippedNoHistory++; }
       else { w.highestPriceThresholdPct = suggested; touched = true; }
     }
-    if (w.lowestPriceAlert && (!w.lowestPriceConfirm || w.lowestPriceConfirm <= 1)) { w.lowestPriceConfirm = 2; touched = true; }
-    if (w.highestPriceAlert && (!w.highestPriceConfirm || w.highestPriceConfirm <= 1)) { w.highestPriceConfirm = 2; touched = true; }
+    // 연속확인 횟수는 "한 번도 안 만짐"(null/undefined)일 때만 2로 올린다. 사용자가 드롭다운에서
+    // 명시적으로 1(즉시발동)을 고른 경우는 값이 저장돼 있으므로 여기서 건드리지 않는다.
+    if (w.lowestPriceAlert && (w.lowestPriceConfirm === undefined || w.lowestPriceConfirm === null)) { w.lowestPriceConfirm = 2; touched = true; }
+    if (w.highestPriceAlert && (w.highestPriceConfirm === undefined || w.highestPriceConfirm === null)) { w.highestPriceConfirm = 2; touched = true; }
     if (touched) applied++;
   });
   saveWatchStateToStorage();
@@ -4200,7 +4243,7 @@ function bulkApplySuggestedThresholds() {
 function getSortedWatchList() {
   const arr = watchList.slice();
   if (watchSortMode === 'signal') {
-    // 신호 점수(최근 14일 창 백분위 + 수수료 반영) 기준 — 양수(사기 좋음)일수록 위,
+    // 신호 점수(최근 7일 고정 창 백분위 + 수수료 반영) 기준 — 양수(사기 좋음)일수록 위,
     // 음수(팔기 좋음)일수록 아래. 이 순서 그대로 "맨 아래에 있는 아이템 = 지금 파밍해서
     // 팔면 유리한 아이템"으로 읽으면 된다.
     const scoreFor = (w) => computeSignalScore(w);
@@ -4333,23 +4376,25 @@ function renderWatchList() {
         <div class="watch-item">
           <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${w.name}</span>
           <span class="w-price" id="wPrice_${w.kind_id}">${priceTxt}</span>
-          <span class="w-valuation" id="wSignal_${w.kind_id}" title="${(signalBadge ? signalBadge.tooltip : '').replace(/"/g, '&quot;')}" style="color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
-          <span class="w-valuation" id="wDevPct_${w.kind_id}" title="현재가가 이 아이템의 최근 평균가 대비 몇 % 위/아래인지" style="color:${devColor};">${devTxt}</span>
-          <span class="w-valuation" id="wProjected_${w.kind_id}" title="최근 짧은 추세를 단순 연장한 참고치일 뿐, 실제 가격을 보장하지 않아요" style="color:${projBadge ? projBadge.color : 'var(--dim)'};">${projBadge ? projBadge.text : '예상(15분) —'}</span>
-          <span class="w-count" id="wCount_${w.kind_id}">${countTxt}</span>
-          <span class="w-updated" id="wUpdated_${w.kind_id}">${timeAgoText(w.lastUpdated)}</span>
+          <span class="w-signal-primary" id="wSignal_${w.kind_id}" title="${(signalBadge ? signalBadge.tooltip : '').replace(/"/g, '&quot;')}" style="color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
           <span class="w-deplete" id="wDeplete_${w.kind_id}" style="display:${depleteBadgeTxt ? 'inline-block' : 'none'};">${depleteBadgeTxt || ''}</span>
           ${firedCount ? `<span class="alert-hit">🔔 ${firedCount}</span>` : ''}
         </div>
+        <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
+          <span class="w-valuation" id="wDevPct_${w.kind_id}" title="평균은 참고용 흐름 지표일 뿐, 실제 판단 기준은 위쪽 신호 배지예요" style="color:${devColor};">${devTxt}</span>
+          <span class="w-valuation" id="wProjected_${w.kind_id}" title="최근 짧은 추세를 단순 연장한 참고치일 뿐, 실제 가격을 보장하지 않아요" style="color:${projBadge ? projBadge.color : 'var(--dim)'};">${projBadge ? projBadge.text : '예상(15분) —'}</span>
+          <span class="w-count" id="wCount_${w.kind_id}">${countTxt}</span>
+          <span id="wRange1h_${w.kind_id}">${range1hTxt}</span>
+          <span id="wRange24h_${w.kind_id}">${rangeTxt}</span>
+        </div>
         <div class="watch-item-quickbtns">
           <button class="ghost${isFocus ? ' toggle-on' : ''}" onclick="toggleFocusWatch(${w.kind_id})" title="집중 감시 — 최대 ${FOCUS_MAX_ITEMS}개까지 동시에 ${FOCUS_INTERVAL_MS / 1000}초마다 갱신 (현재 ${focusKindIds.size}/${FOCUS_MAX_ITEMS})">🎯${isFocus ? ' 집중감시중' : ''}</button>
-          <button class="ghost${w.alertPanelOpen ? ' toggle-on' : ''}" onclick="toggleAlertPanel(${w.kind_id})">${w.alertPanelOpen ? '▾' : '▸'} 상세${alerts.length ? ` (알림 ${alerts.length})` : ''}</button>
+          <button class="ghost detail-btn${w.alertPanelOpen ? ' toggle-on' : ''}" onclick="toggleAlertPanel(${w.kind_id})">${w.alertPanelOpen ? '▾' : '▸'} 알림 설정${alerts.length ? ` (${alerts.length})` : ''}</button>
           <button class="ghost" onclick="removeWatchItem(${w.kind_id})">삭제</button>
         </div>
         ${w.alertPanelOpen ? `
         <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
-          <span id="wRange1h_${w.kind_id}">${range1hTxt}</span>
-          <span id="wRange24h_${w.kind_id}">${rangeTxt}</span>
+          <span id="wUpdated_${w.kind_id}">${timeAgoText(w.lastUpdated)}</span>
           <span id="wCountChg24h_${w.kind_id}" style="color:${countChgColor};">${countChgTxt}</span>
         </div>
         <div class="watch-item-toggles">

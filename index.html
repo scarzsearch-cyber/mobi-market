@@ -326,6 +326,12 @@
             </div>
             <div class="hint" style="margin:0;">개별 알림이 울려도 감시목록의 종합 신호 스코어(절대값)가 이 값보다 작으면 카톡은 건너뛰어요 (0=필터 안 함, 전부 전송). 진짜 중요한 신호만 폰으로 받고 싶을 때 올려보세요 — 역시 브라우저 알림/소리는 항상 그대로 울립니다.</div>
             <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <span style="min-width:120px;">🖥 종합 스코어 필터</span>
+              <input type="number" id="browserMinAbsScoreInput" value="0" min="0" max="100" step="5" style="width:70px;" onchange="saveBrowserMinAbsScore()">
+              <span>이상일 때만 컴퓨터 알림</span>
+            </div>
+            <div class="hint" style="margin:0;">개별 알림이 울려도 종합 신호 스코어(절대값)가 이 값보다 작으면 브라우저 알림·소리·탭 깜빡임까지 전부 건너뛰어요 (0=필터 안 함, 전부 표시). 스코어가 낮으면 사도 팔아도 이득이 없는 구간이라, 진짜 신호만 보고 싶을 때 올려보세요. 카카오톡 필터와는 별개 설정이에요.</div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
               <button class="ghost" id="kakaoHistoryToggleBtn" onclick="toggleKakaoHistory()">📜 알림 이력 보기</button>
               <span class="hint" id="kakaoQuotaHint" style="margin:0;"></span>
             </div>
@@ -562,6 +568,7 @@ const LS_KEYS = {
   extraApiKeys: 'ggMarket.extraApiKeys',
   kakaoItemCooldownMin: 'ggMarket.kakaoItemCooldownMin',
   kakaoMinAbsScore: 'ggMarket.kakaoMinAbsScore',
+  browserMinAbsScore: 'ggMarket.browserMinAbsScore',
   watchSort: 'ggMarket.watchSort',
   alertOutcomeLog: 'ggMarket.alertOutcomeLog',
   pendingAlertEvals: 'ggMarket.pendingAlertEvals',
@@ -736,6 +743,8 @@ function loadStateFromStorage() {
     if (savedCooldownMin) document.getElementById('kakaoItemCooldownMinInput').value = savedCooldownMin;
     const savedMinScore = localStorage.getItem(LS_KEYS.kakaoMinAbsScore);
     if (savedMinScore) document.getElementById('kakaoMinAbsScoreInput').value = savedMinScore;
+    const savedBrowserMinScore = localStorage.getItem(LS_KEYS.browserMinAbsScore);
+    if (savedBrowserMinScore) document.getElementById('browserMinAbsScoreInput').value = savedBrowserMinScore;
     renderKakaoQuotaHint();
     renderKakaoHistory();
   } catch (e) { console.error('[복원 실패] 조용한 시간대/카카오 이력', e); }
@@ -1082,7 +1091,9 @@ function renderApiKeyPoolHint() {
   if (pool.length <= 1) {
     el.textContent = '키 하나만 쓰는 중 — 여기에 추가 키를 넣으면 자동으로 분산/교체해서 분당 한도가 키 개수만큼 늘어나요.';
   } else {
-    el.textContent = `키 ${pool.length}개 로테이션 중 — 대략 분당 ${pool.length * API_SAFE_LIMIT_PER_MIN}회까지 여유가 생겨요.`;
+    const aliveCount = pool.filter(k => !isKeyDead(k)).length;
+    const deadNote = deadApiKeys.size > 0 ? ` (그중 ${deadApiKeys.size}개는 무효 키로 확인돼 제외 중, ${Math.round(DEAD_KEY_REVIVE_MS/60000)}분 뒤 자동 복귀)` : '';
+    el.textContent = `키 ${pool.length}개 로테이션 중, 실사용 ${aliveCount}개${deadNote} — 대략 분당 ${aliveCount * API_SAFE_LIMIT_PER_MIN}회까지 여유가 생겨요.`;
   }
 }
 
@@ -1101,17 +1112,25 @@ function headers() {
 const API_SAFE_LIMIT_PER_MIN = 20; // 키 하나당 서버 한도(30)보다 넉넉히 낮게 잡아 여유를 둠
 const API_WINDOW_MS = 60000;
 const API_CALL_GAP_MS = 200; // 연속 호출 사이 최소 간격 — 순간적으로 몰아 쏘는 것 자체를 방지
-const API_429_MAX_RETRIES = 4;
+const API_401_STRIKES_TO_KILL = 2; // 이 키로 연속 401이 몇 번 나야 "무효 키"로 확정할지 — 1번의 일시적 오류로 멀쩡한 키가 영구 제외되는 걸 방지
 let apiKeyCallLog = {};   // { [key]: [timestamp, ...] } — 키별 최근 호출 기록
 let apiKeyRotationIdx = 0;
-let deadApiKeys = new Set(); // 401(무효 키) 등으로 이번 세션에서 걸러낸 키
+let deadApiKeys = new Map(); // 401(무효 키)이 연속으로 확인된 키 → 죽은 시각(ms). DEAD_KEY_REVIVE_MS 지나면 자동 복귀
+const DEAD_KEY_REVIVE_MS = 5 * 60 * 1000; // 5분 — 401은 대부분 일시적 오류일 수 있어 영구 제외 대신 시간 지나면 재시도
+function isKeyDead(key) {
+  const deadAt = deadApiKeys.get(key);
+  if (deadAt === undefined) return false;
+  if (Date.now() - deadAt >= DEAD_KEY_REVIVE_MS) { deadApiKeys.delete(key); return false; }
+  return true;
+}
+let apiKey401Strikes = {}; // { [key]: count } — 키별 연속 401 횟수(다른 상태코드가 오면 리셋)
 let apiQueue = [];
 let apiQueueRunning = false;
 
 // 라운드로빈 순서로 돌면서, 지금 여유(최근 60초 호출 수 < 안전한도)가 있는 키를 하나 골라준다.
 // 전부 다 여유가 없으면 null을 반환하고, 그러면 큐가 잠깐 쉬었다가 다시 시도한다.
 function pickApiKey() {
-  const pool = getApiKeyPool().filter(k => !deadApiKeys.has(k));
+  const pool = getApiKeyPool().filter(k => !isKeyDead(k));
   if (!pool.length) return null;
   const now = Date.now();
   for (let i = 0; i < pool.length; i++) {
@@ -1148,16 +1167,26 @@ async function runApiQueue() {
     apiKeyCallLog[key] = apiKeyCallLog[key] || [];
     apiKeyCallLog[key].push(Date.now());
     const fetchOpts = { ...(job.opts || {}), headers: { ...(job.opts && job.opts.headers), Authorization: 'Bearer ' + key } };
+    // 재시도 상한은 키 개수에 비례하게 — 키가 5개면 다 한 바퀴 돌아볼 여유(키 개수*2)를 준다.
+    // 그래야 여러 키가 순간적으로 같이 꽉 찼을 때도 재시도가 먼저 바닥나서 "한도 초과"로 잘못 보고하는 일이 줄어든다.
+    const poolSize = Math.max(1, getApiKeyPool().filter(k => !isKeyDead(k)).length);
+    const maxRetries = Math.max(4, poolSize * 2);
     try {
       const res = await fetch(job.url, fetchOpts);
       if (res.status === 401) {
-        // 이 키는 아예 무효 — 이번 세션에서 로테이션 대상에서 제외하고, 요청은 다른 키로 재시도
-        deadApiKeys.add(key);
-        renderApiKeyPoolHint();
+        // 1번의 401만으로는 무효 키로 단정하지 않는다 — 서버 순간 오류/지연일 수 있어서다.
+        // 같은 키로 연속 401이 STRIKES 번 쌓여야 진짜 무효 키로 보고 로테이션에서 뺀다.
+        apiKey401Strikes[key] = (apiKey401Strikes[key] || 0) + 1;
+        if (apiKey401Strikes[key] >= API_401_STRIKES_TO_KILL) {
+          deadApiKeys.set(key, Date.now());
+          renderApiKeyPoolHint();
+        }
         apiQueue.unshift(job);
         continue;
       }
-      if (res.status === 429 && job.retries < API_429_MAX_RETRIES) {
+      // 401이 아닌 응답을 받았다면 이 키는 정상 동작 중인 것 — 이전에 쌓인 401 카운트를 리셋
+      if (apiKey401Strikes[key]) apiKey401Strikes[key] = 0;
+      if (res.status === 429 && job.retries < maxRetries) {
         // 자체 제한을 걸어놨는데도 이 키가 429를 맞았다는 건 실제 한도가 예상보다 빡빡하다는 뜻.
         // 이 키를 당분간(이번 60초 창) "가득 찼다"고 마킹해서 다음 시도부터는 자동으로 다른 키로 넘어가게 한다.
         job.retries += 1;
@@ -1166,6 +1195,11 @@ async function runApiQueue() {
         await new Promise(r => setTimeout(r, 300));
         continue;
       }
+      if (res.status === 429) {
+        // 재시도를 다 써버린 경우 — 등록된 키 몇 개 중 몇 개가 막혀있는지 함께 남겨서
+        // "키가 5개인데 왜?" 같은 혼란 없이 실제 상황을 바로 파악할 수 있게 한다.
+        res.ggExhaustedInfo = { poolSize, deadCount: deadApiKeys.size };
+      }
       job.resolve(res);
     } catch (e) {
       job.reject(e);
@@ -1173,6 +1207,18 @@ async function runApiQueue() {
     if (apiQueue.length) await new Promise(r => setTimeout(r, API_CALL_GAP_MS));
   }
   apiQueueRunning = false;
+}
+
+// 429 안내 문구를 등록된 키 개수/현재 죽은 키 개수까지 포함해서 만들어준다.
+// "키가 5개인데 왜 한도 초과가 뜨지?" 같은 혼란을 줄이려는 목적.
+function build429Hint() {
+  const total = getApiKeyPool().length;
+  const dead = deadApiKeys.size;
+  if (total <= 1) {
+    return '요청 한도 초과(429) — 이 API 키는 분당 30회까지만 허용됩니다. 1분 정도 기다렸다가 다시 시도해주세요. (아래 "API 키 로테이션"에 키를 더 등록하면 분산돼요.)';
+  }
+  const deadNote = dead > 0 ? ` (그중 ${dead}개는 무효 키로 확인돼 로테이션에서 제외됨)` : '';
+  return `요청 한도 초과(429) — 등록된 키 ${total}개${deadNote}가 동시에 한도 근처까지 몰렸습니다. 감시 목록이 크거나 자동갱신 주기가 짧으면 자주 겪을 수 있어요. 1분 정도 기다리거나 자동갱신 주기를 늘려보세요.`;
 }
 
 function setHint(msg, isError) {
@@ -1293,7 +1339,7 @@ async function run() {
     });
   } catch (e) {
     if (e.message.includes('429')) {
-      setHint('요청 한도 초과(429) — 이 API 키는 분당 30회까지만 허용됩니다. 1분 정도 기다렸다가 다시 시도해주세요.', true);
+      setHint(build429Hint(), true);
     } else {
       setHint(e.message + ' — CORS 문제일 수 있습니다. 아래 "JSON 직접 붙여넣기"를 사용해보세요.', true);
     }
@@ -1326,7 +1372,7 @@ async function switchDays() {
     setHint('');
   } catch (e) {
     if (e.message.includes('429')) {
-      setHint('요청 한도 초과(429) — 이 API 키는 분당 30회까지만 허용됩니다. 1분 정도 기다렸다가 다시 시도해주세요.', true);
+      setHint(build429Hint(), true);
     } else {
       setHint(e.message + ' — CORS 문제일 수 있습니다. 아래 "JSON 직접 붙여넣기"를 사용해보세요.', true);
     }
@@ -2677,6 +2723,17 @@ function getKakaoMinAbsScore() {
   return (!v || v < 0) ? 0 : v;
 }
 
+// 종합 스코어의 절대값이 이 값보다 작으면 브라우저(윈도우/맥) 알림·소리·탭 깜빡임을 건너뛴다.
+// 카카오톡 필터(getKakaoMinAbsScore)와는 완전히 별개 설정 — 둘 다 0이면 기존과 동일하게 전부 울린다.
+function saveBrowserMinAbsScore() {
+  const v = document.getElementById('browserMinAbsScoreInput').value;
+  localStorage.setItem(LS_KEYS.browserMinAbsScore, v);
+}
+function getBrowserMinAbsScore() {
+  const v = Number(localStorage.getItem(LS_KEYS.browserMinAbsScore));
+  return (!v || v < 0) ? 0 : v;
+}
+
 // 오늘(KST) 카카오 전송 횟수를 세어 대략적인 남은 호출 가능 횟수를 보여준다. 카카오 공식 실시간 잔여량 API가
 // 따로 없어서 클라이언트에서 자체 카운트한 값이며, 참고용 추정치임을 안내에 명시한다.
 function bumpKakaoQuota() {
@@ -3152,6 +3209,18 @@ function showBrowserNotification(title, body, kindId) {
   } catch (e) { /* 무시 */ }
 }
 
+// 종합 스코어 필터를 브라우저 알림(팝업+소리+탭 깜빡임)에도 적용하기 위한 공통 체크.
+// kindId가 없거나(테스트 알림 등) 그 아이템 신호를 계산할 데이터가 없으면 필터를 적용하지 않는다.
+// 카카오톡은 이 함수와 무관하게 queueKakaoAlert 내부의 자체 필터(getKakaoMinAbsScore)를 그대로 따른다.
+function passesBrowserScoreFilter(kindId) {
+  const minAbsScore = getBrowserMinAbsScore();
+  if (minAbsScore <= 0 || kindId === null || kindId === undefined) return true;
+  const w = watchList.find(x => x.kind_id === kindId);
+  const score = w ? computeSignalScore(w) : null;
+  if (score === null) return true; // 점수를 아직 계산할 수 없으면(데이터 부족) 필터로 걸러내지 않음
+  return Math.abs(score) >= minAbsScore;
+}
+
 function notifyPriceAlert(alertObj, price, itemName, kindId, overrideMsg) {
   const msg = overrideMsg
     ? `${itemName} 가격이 ${price.toLocaleString()} (${overrideMsg})`
@@ -3161,10 +3230,12 @@ function notifyPriceAlert(alertObj, price, itemName, kindId, overrideMsg) {
         return `${itemName} 가격이 ${price.toLocaleString()} (설정: ${alertObj.price.toLocaleString()} ${dirWord}${noteTxt})`;
       })();
 
-  showBrowserNotification('가격 알림 도달', msg, kindId);
+  if (passesBrowserScoreFilter(kindId)) {
+    showBrowserNotification('가격 알림 도달', msg, kindId);
+    playAlertSound('price');
+    flashTabTitle('🔔 가격 알림!');
+  }
   queueKakaoAlert(kindId, overrideMsg ? '📉 트레일링 알림 도달' : '💰 가격 알림 도달', msg, itemName);
-  playAlertSound('price');
-  flashTabTitle('🔔 가격 알림!');
   // 적중률 판정 대상은 방향이 명확한 목표가 알림(threshold)만 — 이하 도달은 살 타이밍(buy),
   // 이상 도달은 팔 타이밍(sell) 신호로 본다. 트레일링/추세전환(overrideMsg 있음)은 방향이
   // 애매해서 제외한다.
@@ -3179,20 +3250,24 @@ function notifyNewListing(w, prevCount, newCount) {
   const priceTxt = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '-');
   const msg = `${w.name} 매물 ${prevCount.toLocaleString()} → ${newCount.toLocaleString()}개 (현재 최저가 ${priceTxt})`;
 
-  showBrowserNotification('🆕 신규 매물 등록', msg, w.kind_id);
+  if (passesBrowserScoreFilter(w.kind_id)) {
+    showBrowserNotification('🆕 신규 매물 등록', msg, w.kind_id);
+    playAlertSound('newListing');
+    flashTabTitle('🆕 신규 매물!');
+  }
   queueKakaoAlert(w.kind_id, '🆕 신규 매물 등록', msg, w.name);
-  playAlertSound('newListing');
-  flashTabTitle('🆕 신규 매물!');
 }
 
 // 최저가가 직전 확인 시점보다 "떨어졌을 때" — 재판매가 불가능한 시장에서는 이 순간이 곧
 // "지금 사면 방금 전보다 싸게 산다"는 뜻이라, 살 타이밍을 노리는 사람에게 가장 직접적인 신호다.
 function notifyLowestPriceAlert(w, prevPrice, newPrice, dropPct) {
   const msg = `${w.name} 최저가 ${prevPrice.toLocaleString()} → ${newPrice.toLocaleString()} (-${dropPct.toFixed(1)}%) — 지금이 살 타이밍일 수 있어요`;
-  showBrowserNotification('⬇ 최저가 하락', msg, w.kind_id);
+  if (passesBrowserScoreFilter(w.kind_id)) {
+    showBrowserNotification('⬇ 최저가 하락', msg, w.kind_id);
+    playAlertSound('lowPrice');
+    flashTabTitle('⬇ 최저가 하락!');
+  }
   queueKakaoAlert(w.kind_id, '⬇ 최저가 하락', msg, w.name);
-  playAlertSound('lowPrice');
-  flashTabTitle('⬇ 최저가 하락!');
   recordAlertFired(w.kind_id, w.name, '⬇ 최저가 하락', 'buy', newPrice);
 }
 
@@ -3200,10 +3275,12 @@ function notifyLowestPriceAlert(w, prevPrice, newPrice, dropPct) {
 // 팔 계획이 있는 사람에게는 "지금 등록하면 전보다 비싸게 팔 수 있다"는 신호가 된다.
 function notifyHighestPriceAlert(w, prevPrice, newPrice, risePct) {
   const msg = `${w.name} 최저가 ${prevPrice.toLocaleString()} → ${newPrice.toLocaleString()} (+${risePct.toFixed(1)}%) — 지금이 팔 타이밍일 수 있어요`;
-  showBrowserNotification('⬆ 최저가 상승', msg, w.kind_id);
+  if (passesBrowserScoreFilter(w.kind_id)) {
+    showBrowserNotification('⬆ 최저가 상승', msg, w.kind_id);
+    playAlertSound('highPrice');
+    flashTabTitle('⬆ 최저가 상승!');
+  }
   queueKakaoAlert(w.kind_id, '⬆ 최저가 상승', msg, w.name);
-  playAlertSound('highPrice');
-  flashTabTitle('⬆ 최저가 상승!');
   recordAlertFired(w.kind_id, w.name, '⬆ 최저가 상승', 'sell', newPrice);
 }
 
@@ -3212,10 +3289,12 @@ function notifyHighestPriceAlert(w, prevPrice, newPrice, risePct) {
 function notifyListingDrop(w, prevCount, newCount) {
   const priceTxt = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '-');
   const msg = `${w.name} 매물 ${prevCount.toLocaleString()} → ${newCount.toLocaleString()}개 (현재 최저가 ${priceTxt}) — 품귀 진행 중, 팔기 좋은 타이밍일 수 있어요`;
-  showBrowserNotification('⚠️ 품귀 진행 중', msg, w.kind_id);
+  if (passesBrowserScoreFilter(w.kind_id)) {
+    showBrowserNotification('⚠️ 품귀 진행 중', msg, w.kind_id);
+    playAlertSound('listingDrop');
+    flashTabTitle('⚠️ 품귀!');
+  }
   queueKakaoAlert(w.kind_id, '⚠️ 품귀 진행 중', msg, w.name);
-  playAlertSound('listingDrop');
-  flashTabTitle('⚠️ 품귀!');
   if (!w.soldOut && w.price !== null) recordAlertFired(w.kind_id, w.name, '⚠ 품귀', 'sell', w.price);
 }
 
@@ -3929,25 +4008,44 @@ const WATCHLIST_REFRESH_BATCH_SIZE = 10;
 let watchlistRefreshCursor = 0;
 
 function refreshWatchList() {
-  if (!watchList.length) return;
+  if (!watchList.length) return Promise.resolve();
+  let jobs;
   if (watchList.length <= WATCHLIST_REFRESH_BATCH_SIZE) {
-    watchList.forEach(w => refreshWatchItem(w));
-    return;
+    jobs = watchList;
+  } else {
+    const priority = watchList.filter(w => w.kind_id === lastKindId || focusKindIds.has(w.kind_id));
+    const priorityIds = new Set(priority.map(w => w.kind_id));
+    const rest = watchList.filter(w => !priorityIds.has(w.kind_id));
+
+    const slotsLeft = Math.max(WATCHLIST_REFRESH_BATCH_SIZE - priority.length, 0);
+    const rotated = [];
+    for (let i = 0; i < slotsLeft && rest.length; i++) {
+      const idx = watchlistRefreshCursor % rest.length;
+      rotated.push(rest[idx]);
+      watchlistRefreshCursor++;
+    }
+    jobs = [...priority, ...rotated];
   }
+  // 갱신된 데이터가 반영된 뒤에야 정렬 순서가 정확해지므로, 이 배치가 전부 끝난 다음에
+  // (renderWatchList처럼 다시 그리지 않고) 기존 DOM만 정렬 순서대로 옮겨준다 — 열려 있는
+  // 알림 설정 패널이나 입력값은 그대로 유지된다.
+  return Promise.all(jobs.map(w => refreshWatchItem(w))).then(() => {
+    if (watchSortMode !== 'default') reorderWatchListDOM();
+  });
+}
 
-  const priority = watchList.filter(w => w.kind_id === lastKindId || focusKindIds.has(w.kind_id));
-  const priorityIds = new Set(priority.map(w => w.kind_id));
-  const rest = watchList.filter(w => !priorityIds.has(w.kind_id));
-
-  const slotsLeft = Math.max(WATCHLIST_REFRESH_BATCH_SIZE - priority.length, 0);
-  const rotated = [];
-  for (let i = 0; i < slotsLeft && rest.length; i++) {
-    const idx = watchlistRefreshCursor % rest.length;
-    rotated.push(rest[idx]);
-    watchlistRefreshCursor++;
-  }
-
-  [...priority, ...rotated].forEach(w => refreshWatchItem(w));
+// 정렬 모드가 signal/valuation/price일 때, 자동갱신으로 점수가 바뀌어도 화면 순서가
+// 그대로였던 문제를 고치기 위한 함수. innerHTML을 다시 그리면(renderWatchList) 열려 있는
+// 알림 패널의 입력값이 날아가버리므로, 대신 이미 있는 DOM 노드를 appendChild로 재정렬
+// 순서에 맞게 옮기기만 한다 — appendChild는 기존 노드를 이동만 시킬 뿐 재생성하지 않아서
+// 폼 상태가 그대로 보존된다.
+function reorderWatchListDOM() {
+  const box = document.getElementById('watchList');
+  if (!box) return;
+  getSortedWatchList().forEach(w => {
+    const row = document.getElementById(`wRow_${w.kind_id}`);
+    if (row) box.appendChild(row);
+  });
 }
 
 // "n초 전" / "n분 전" 형태로 변환. 아직 한 번도 갱신 안 됐으면 빈 문자열.
@@ -4095,8 +4193,14 @@ function computeSignalScore(w) {
   if (rank !== null) {
     let extremity; // 양수=사기 좋음(쌈), 음수=팔기 좋음(비쌈)
     if (rank <= 50) {
-      // 하위권일수록(0에 가까울수록) 사기 좋은 극단
-      extremity = (50 - rank) * 2; // 0(중간) ~ 100(역대 최저가 수준)
+      // 재료를 사는 건 그 자체론 수수료가 없지만, 이 재료를 만들어서(혹은 그대로) 나중에
+      // 팔 때는 결국 수수료 15%를 뗀다. 그래서 "지금 원가가 싼가"만 보면 안 되고,
+      // "수수료를 얹어 되팔아도 여전히 역사적으로 싼 축인가"를 봐야 진짜 사기 좋은 타이밍이다.
+      // 매도 쪽(아래 else)이 수수료를 뗀 실수령 기준으로 재확인하는 것과 대칭적으로,
+      // 여기서는 수수료만큼 얹은 "실질 원가"를 기준으로 재확인한다.
+      const grossCost = w.price / (1 - SELL_FEE_PCT / 100);
+      const grossRank = computePricePercentileRank(w.kind_id, grossCost);
+      extremity = grossRank === null ? 0 : Math.max(0, (50 - grossRank) * 2);
     } else {
       // 상위권이어도, 수수료 15%를 뗀 실수령액 기준으로 다시 백분위를 매겨서
       // "수수료 떼고도 여전히 역대급으로 비싼 축"인지 재확인한다.
@@ -4127,8 +4231,8 @@ function computeSignalScore(w) {
 // 점수(-100~100)를 5칸짜리 강도 막대(●○○○○)로 변환.
 // |score| 20점당 한 칸씩 채우되, 중립 구간(|score|<40)은 0칸으로 비워 둔다.
 function signalStrengthBar(score) {
-  if (Math.abs(score) < 40) return '○○○○○';
-  const filled = Math.max(1, Math.min(5, Math.ceil(Math.abs(score) / 20)));
+  if (Math.abs(score) < 55) return '○○○○○';
+  const filled = Math.max(1, Math.min(5, Math.ceil((Math.abs(score) - 40) / 12)));
   return '●'.repeat(filled) + '○'.repeat(5 - filled);
 }
 
@@ -4139,12 +4243,12 @@ function computeSignalBadge(w) {
   // "매수우위/매도우위"처럼 "누가 우세한가"로 읽히는 표현은 "매수세가 강해서 오히려 가격이
   // 오른다"는 정반대 의미로도 읽힐 수 있어 혼동을 준다. 그래서 "지금 사기/팔기 좋다"처럼
   // 행동을 직접 가리키는 문구로 명확히 한다.
-  // 재구매 불가 구조라 애매한 신호는 오히려 손해로 이어지기 쉬워, 문턱을 40/70으로 높여
-  // "진짜 극단"에서만 켜지게 한다.
-  if (score >= 70) { label = '🟢 지금 사기 좋음'; color = 'var(--up)'; }
-  else if (score >= 40) { label = '🟢 사기 좋은 편'; color = 'var(--up)'; }
-  else if (score <= -70) { label = '🔴 지금 팔기 좋음'; color = 'var(--down)'; }
-  else if (score <= -40) { label = '🔴 팔기 좋은 편'; color = 'var(--down)'; }
+  // 재구매 불가 구조라 애매한 신호는 오히려 손해로 이어지기 쉬워, 문턱을 55/82로 높여
+  // "수수료 15%를 감안하고도 확실히 남는" 극단에서만 켜지게 한다.
+  if (score >= 82) { label = '🟢 지금 사기 좋음'; color = 'var(--up)'; }
+  else if (score >= 55) { label = '🟢 사기 좋은 편'; color = 'var(--up)'; }
+  else if (score <= -82) { label = '🔴 지금 팔기 좋음'; color = 'var(--down)'; }
+  else if (score <= -55) { label = '🔴 팔기 좋은 편'; color = 'var(--down)'; }
   else { label = '⚪ 중립'; color = 'var(--dim)'; }
   const bar = signalStrengthBar(score);
   return {
@@ -4153,10 +4257,10 @@ function computeSignalBadge(w) {
     color,
     tooltip: '평균은 그저 흐름 참고용(평균대비 배지에서 별도 표시)이고, 이 점수는 "과거 시세 분포에서 실제로 얼마나 싸거나 비싼 축인가"로 계산돼요.\n'
       + '품귀 등 다른 조건이 없어도, 가격 자체가 역대급으로 싸거나(사기) 비싸면(팔기) 그것만으로 신호가 떠요.\n'
-      + `판매 쪽 계산에는 고정 수수료 ${SELL_FEE_PCT}%가 반영돼요 (수수료 떼고도 여전히 역대급으로 비싼 축인지 기준).\n`
+      + `사기·팔기 양쪽 다 수수료 ${SELL_FEE_PCT}%를 감안해서 재확인해요 — 살 때도 "나중에 팔 때 수수료 떼고도 여전히 싼 축"인지, 팔 때도 "수수료 떼고도 여전히 비싼 축"인지 봐요.\n`
       + '수량 변화·모멘텀·소진임박도는 가격에 아직 안 잡힌 조짐을 살짝 보태는 보조 지표일 뿐이에요.\n'
       + '막대(●○○○○)는 점수의 세기를 5단계로 보여줘요.\n'
-      + '±40 미만: 중립(빈 막대, 재구매 불가 구조상 움직이지 않는 게 안전) · ±40~69: 좋은 편(1~2칸) · ±70 이상: 지금 확실히 좋음(3~5칸)',
+      + '±55 미만: 중립(빈 막대, 재구매 불가 구조상 움직이지 않는 게 안전) · ±55~81: 좋은 편(1~2칸) · ±82 이상: 지금 확실히 좋음(3~5칸)',
   };
 }
 
@@ -4372,7 +4476,7 @@ function renderWatchList() {
     const suggestedTitle = suggestedPct !== null ? `변동성 기반 추천값: ${suggestedPct}%` : '추천값을 계산하려면 먼저 [조회]로 시세이력을 불러오세요';
     const confirmOptions = (selected) => [1, 2, 3].map(n => `<option value="${n}"${n === (selected || 1) ? ' selected' : ''}>${n}회</option>`).join('');
     return `
-      <div class="watch-item-wrap">
+      <div class="watch-item-wrap" id="wRow_${w.kind_id}">
         <div class="watch-item">
           <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${w.name}</span>
           <span class="w-price" id="wPrice_${w.kind_id}">${priceTxt}</span>

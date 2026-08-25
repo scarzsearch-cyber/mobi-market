@@ -451,9 +451,9 @@
         <select id="candleSel" style="display:none;"></select>
         <select id="maTypeSel" onchange="saveMaPref()" title="이동평균선 종류">
           <option value="none">이평선 없음</option>
-          <option value="hma" selected>HMA (추천)</option>
-          <option value="tema">TEMA</option>
-          <option value="both">HMA+TEMA 동시</option>
+          <option value="hma">HMA</option>
+          <option value="tema" selected>TEMA (즉각 반응, 추천)</option>
+          <option value="both">TEMA + 7일/30일선 (맥락+타이밍)</option>
         </select>
         <button id="loadBtn">조회</button>
         <button class="ghost" id="autoBtn">자동갱신 OFF</button>
@@ -2032,39 +2032,60 @@ function drawCandles(rawPoints, min, max) {
   // 이동평균선 — 캔들보다 나중에(=위에) 그려야 캔들 색상에 안 묻힌다.
   // 이 게임은 매주 정해진 패치로 가격 레벨 자체가 계단식으로 바뀌기 때문에, 주식에서 흔히 쓰는
   // 20일 SMA 같은 느린 이평선은 옛 레벨을 오래 끌고 다녀 오히려 잘못된 신호를 준다. 종류/기간은
-  // 사용자가 위 드롭다운에서 고를 수 있고, 기본값은 지연은 적으면서도 단발성 튀는 체결엔 덜
-  // 흔들리는 HMA로 잡아뒀다. "HMA+TEMA 동시"를 고르면 큰 흐름(HMA)과 실시간 타이밍(TEMA)을
-  // 색을 다르게 해서 같이 보여준다 — 두 선이 갈라지는 지점(크로스)이 그 자체로 신호가 된다.
+  // 사용자가 위 드롭다운에서 고를 수 있고, 기본값은 지연이 가장 적은 TEMA로 잡아뒀다.
+  // "TEMA + 7일/30일선"을 고르면, 즉각 반응하는 TEMA(단기 타이밍용)와 실제 7일 또는 30일치
+  // 데이터를 그대로 평균낸 맥락선(큰 흐름용)을 같이 보여준다 — 예전처럼 둘 다 기간 3짜리라
+  // 사실상 같은 선 두 개가 겹쳐 보이던 문제를 없애고, 두 선이 갈라지는 지점(크로스)이 그 자체로
+  // 신호가 되도록 실제로 기간 차이를 뒀다. 보고 있는 기간(1일/7일 뷰 → 7일선, 30일/90일 뷰 →
+  // 30일선)에 따라 맥락선의 실제 기간이 자동으로 정해진다 (아래 daysSel 참고).
   const maType = document.getElementById('maTypeSel').value;
-  const MA_COLORS = { hma: '#38BDF8', tema: '#facc15' }; // HMA=스카이블루, TEMA=노랑
-  const MA_LABELS_TO_DRAW = maType === 'both' ? ['hma', 'tema'] : (maType !== 'none' ? [maType] : []);
-  if (MA_LABELS_TO_DRAW.length && n >= 2) {
-    const maPeriod = Math.min(3, n);
+  const MA_COLORS = { hma: '#38BDF8', tema: '#facc15', context: '#a78bfa' }; // TEMA=노랑, 맥락선(7/30일)=보라
+  let maLines = [];
+  const maStyleForRender = getMaStyle();
+  if (maType !== 'none' && n >= 2) {
     const closes = points.map(p => p.close);
-    const maLines = MA_LABELS_TO_DRAW.map(t => {
-      const maValues = computeMA(closes, maPeriod, t);
-      return maValues ? { type: t, color: MA_COLORS[t], pts: maValues.map((v, i) => `${x(i)},${y(v)}`).join(' ') } : null;
-    }).filter(Boolean);
-
-    // 두 선(HMA/TEMA)을 같이 그릴 땐 기간이 둘 다 짧아서 거의 붙어 다니는 구간이 많다. 나중에
-    // 그리는 선이 먼저 그린 선을 완전히 덮어버리는 걸 막기 위해, HMA는 굵게(테두리처럼) 먼저 깔고
-    // TEMA는 얇게 그 위에 그린다 — 겹쳐도 HMA 색이 항상 양옆으로 살짝 삐져나와 보인다.
+    if (maType === 'both') {
+      // 맥락선의 실제 기간: 지금 보고 있는 캔들 간격(1일=10분봉, 7일=1시간봉, 30/90일=일봉)을
+      // 기준으로, 7일 또는 30일치에 해당하는 캔들 개수를 구한다. 1일/7일 뷰면 7일선을,
+      // 30일/90일 뷰면 30일선을 겹친다 — 짧은 뷰에서 30일선은 정보가 없고, 긴 뷰에서 7일선은
+      // 너무 잘아서 TEMA와 구분이 안 가기 때문.
+      const daysVal = document.getElementById('daysSel').value;
+      const candlesPerDay = { '1': 144, '7': 24, '30': 1, '90': 1 }[daysVal] || 1;
+      const contextDays = (daysVal === '1' || daysVal === '7') ? 7 : 30;
+      const contextPeriod = Math.max(2, Math.min(n, Math.round(candlesPerDay * contextDays)));
+      const temaValues = computeTEMA(closes, Math.min(3, n));
+      const contextValues = computeEMA(closes, contextPeriod);
+      maLines = [
+        { type: 'context', label: `EMA(${contextDays}일)`, color: MA_COLORS.context, pts: contextValues.map((v, i) => `${x(i)},${y(v)}`).join(' ') },
+        { type: 'tema', label: `TEMA(${Math.min(3, n)})`, color: MA_COLORS.tema, pts: temaValues.map((v, i) => `${x(i)},${y(v)}`).join(' ') },
+      ];
+    } else {
+      const maPeriod = Math.min(3, n);
+      const maValues = computeMA(closes, maPeriod, maType);
+      if (maValues) {
+        maLines = [{ type: maType, label: `${maType.toUpperCase()}(${maPeriod})`, color: MA_COLORS[maType] || '#38BDF8', pts: maValues.map((v, i) => `${x(i)},${y(v)}`).join(' ') }];
+      }
+    }
+  }
+  if (maLines.length) {
+    // 두 선을 같이 그릴 땐, 나중에 그리는 선이 먼저 그린 선을 완전히 덮어버리는 걸 막기 위해
+    // 맥락선(느림)을 굵게(테두리처럼) 먼저 깔고 TEMA(빠름)는 얇게 그 위에 그린다 — 겹쳐도
+    // 맥락선 색이 항상 양옆으로 살짝 삐져나와 보인다.
     // 두께/명암은 "⚙️ 설정 → 이평선 스타일"에서 사용자가 직접 조절할 수 있다.
-    const style = getMaStyle();
-    const widthOf = (t) => t === 'hma' ? style.hmaWidth : style.temaWidth;
-    maLines.forEach(({ type: t, pts }) => {
-      if (style.haloWidth > 0) {
-        svg += `<polyline points="${pts}" fill="none" stroke="#000000" stroke-width="${style.haloWidth}" opacity="${style.haloOpacity}" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const widthOf = (t) => t === 'tema' ? maStyleForRender.temaWidth : maStyleForRender.hmaWidth;
+    maLines.forEach(({ pts }) => {
+      if (maStyleForRender.haloWidth > 0) {
+        svg += `<polyline points="${pts}" fill="none" stroke="#000000" stroke-width="${maStyleForRender.haloWidth}" opacity="${maStyleForRender.haloOpacity}" stroke-linejoin="round" stroke-linecap="round"/>`;
       }
     });
     maLines.forEach(({ type: t, color, pts }) => {
-      svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${widthOf(t)}" opacity="${style.lineOpacity}" stroke-linejoin="round" stroke-linecap="round"/>`;
+      svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${widthOf(t)}" opacity="${maStyleForRender.lineOpacity}" stroke-linejoin="round" stroke-linecap="round"/>`;
     });
-    maLines.forEach(({ type: t, color }, idx) => {
-      const label = `— ${t.toUpperCase()}(${maPeriod})`;
+    maLines.forEach(({ label, color }, idx) => {
+      const labelTxt = `— ${label}`;
       const labelY = padT + 4 + idx * 18;
-      svg += `<rect x="${padL + 2}" y="${labelY}" width="${label.length * 6.5 + 12}" height="16" rx="3" fill="#000000" opacity="0.3"/>`;
-      svg += `<text x="${padL + 8}" y="${labelY + 11}" font-size="11" font-weight="700" fill="${color}">${label}</text>`;
+      svg += `<rect x="${padL + 2}" y="${labelY}" width="${labelTxt.length * 6.5 + 12}" height="16" rx="3" fill="#000000" opacity="0.3"/>`;
+      svg += `<text x="${padL + 8}" y="${labelY + 11}" font-size="11" font-weight="700" fill="${color}">${labelTxt}</text>`;
     });
   }
 
@@ -4211,7 +4232,9 @@ function computeSignalScore(w) {
     total += Math.max(-85, Math.min(85, extremity));
     used = true;
   }
-  // 보조 지표: 가격에 아직 안 잡힌 조짐을 살짝만 더해주는 용도 (합쳐서 최대 ±15 수준)
+  // 보조 지표: 가격에 아직 안 잡힌 조짐을 살짝만 더해주는 용도. 주 지표(최대 ±85)가 압도적
+  // 비중을 갖도록, 아래 항목들은 다 합쳐도 최대 ±26점을 넘지 않게 눌러뒀다 — "싸게 사서
+  // 비싸게 판다"는 본래 목적에서 점수가 잡다한 요인들로 흐려지지 않게 하기 위함이다.
   if (w.pct24h !== null && w.pct24h !== undefined) {
     total += Math.max(-6, Math.min(6, -w.pct24h * 0.3)); // 24h 하락 중이면 양수 기여
     used = true;
@@ -4224,8 +4247,35 @@ function computeSignalScore(w) {
     total += -((10 - w.depletionEtaMin) / 10) * 8; // 소진이 임박할수록 음수(팔기 좋음) 방향
     used = true;
   }
+  // TEMA(빠른 선)가 맥락선(느린 선)을 "방금 막" 뚫고 올라가거나 내려간 경우에만 살짝 보탠다.
+  // 이미 지나서 계속 위/아래에 머물러 있는 상태는 가격 극단성(주 지표)에 이미 반영돼 있을
+  // 가능성이 높아서 중복 반영을 피하려고 "막 교차한 시점"만 잡는다. 비중을 ±6으로 작게 둔
+  // 것도 같은 이유 — 크로스 자체는 참고용 타이밍 확인이지, 그 자체로 사고팔 이유는 아니다.
+  const crossSignal = computeMaCrossSignal(w.kind_id);
+  if (crossSignal !== null) {
+    total += crossSignal * 6; // crossSignal: +1(방금 상향 돌파, 사기 참고) / -1(방금 하향 돌파, 팔기 참고)
+    used = true;
+  }
   if (!used) return null;
   return Math.max(-100, Math.min(100, Math.round(total)));
+}
+
+// TEMA(3)와 맥락 EMA(대략 전체 캐시 구간의 1/4 기간)를 캐시된 시세이력으로 계산해서,
+// 마지막 캔들에서 "방금 막" 교차가 일어났는지만 확인한다. 데이터가 모자라거나(6개 미만)
+// 캐시가 아직 없으면(한 번도 조회 안 한 아이템) null — 이 경우 점수에 아예 반영하지 않는다.
+function computeMaCrossSignal(kindId) {
+  const closes = getRecentClosesForKind(kindId);
+  if (!closes || closes.length < 6) return null;
+  const temaPeriod = Math.min(3, closes.length);
+  const contextPeriod = Math.max(5, Math.round(closes.length / 4));
+  const tema = computeTEMA(closes, temaPeriod);
+  const context = computeEMA(closes, contextPeriod);
+  const n = closes.length;
+  const prevDiff = tema[n - 2] - context[n - 2];
+  const curDiff = tema[n - 1] - context[n - 1];
+  if (prevDiff <= 0 && curDiff > 0) return 1;  // 방금 상향 돌파 — 사기 쪽 참고
+  if (prevDiff >= 0 && curDiff < 0) return -1; // 방금 하향 돌파 — 팔기 쪽 참고
+  return 0; // 교차 없음(계속 같은 쪽에 머무는 중) — 이미 지나간 상태라 반영 안 함
 }
 
 // 점수(-100~100)를 5칸짜리 강도 막대(●○○○○)로 변환.
@@ -4258,7 +4308,7 @@ function computeSignalBadge(w) {
     tooltip: '평균은 그저 흐름 참고용(평균대비 배지에서 별도 표시)이고, 이 점수는 "과거 시세 분포에서 실제로 얼마나 싸거나 비싼 축인가"로 계산돼요.\n'
       + '품귀 등 다른 조건이 없어도, 가격 자체가 역대급으로 싸거나(사기) 비싸면(팔기) 그것만으로 신호가 떠요.\n'
       + `사기·팔기 양쪽 다 수수료 ${SELL_FEE_PCT}%를 감안해서 재확인해요 — 살 때도 "나중에 팔 때 수수료 떼고도 여전히 싼 축"인지, 팔 때도 "수수료 떼고도 여전히 비싼 축"인지 봐요.\n`
-      + '수량 변화·모멘텀·소진임박도는 가격에 아직 안 잡힌 조짐을 살짝 보태는 보조 지표일 뿐이에요.\n'
+      + '수량 변화·모멘텀·소진임박도·TEMA-맥락선 교차는 가격에 아직 안 잡힌 조짐을 살짝 보태는 보조 지표(합쳐서 최대 ±26)일 뿐, 주 지표(가격 극단성, 최대 ±85)가 압도적 비중이에요.\n'
       + '막대(●○○○○)는 점수의 세기를 5단계로 보여줘요.\n'
       + '±55 미만: 중립(빈 막대, 재구매 불가 구조상 움직이지 않는 게 안전) · ±55~81: 좋은 편(1~2칸) · ±82 이상: 지금 확실히 좋음(3~5칸)',
   };

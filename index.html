@@ -4365,9 +4365,9 @@ const SELL_FEE_PCT = 15;
 // 즉 공급은 가격 신호의 방향을 바꾸지 않고 세기만 조절한다. 사기도 하고 팔기도 하는
 // 사용자에게 한 방향을 강요하지 않으면서도, 실질 영향력은 종전 ±14 보다 훨씬 크다.
 //
-// ⚠ 이 가중치는 아직 데이터로 검증된 값이 아니다. 수량 이력이 저장된 적이 없어서
+// ⚠ 이 가중치는 아직 데이터로 검증된 값이 아니다. 수량 이력이 어디에도 저장되지 않아서
 // ("수량이 줄면 가격이 오르는가"를 확인할 과거 데이터가 없다) 지금은 시장 구조에서 나온
-// 가설이다. supplyLog 가 쌓이면 적중률 탭에서 실제로 재볼 수 있다.
+// 가설이다. 세기를 바꾸려면 SUPPLY_TILT 한 곳만 고치면 된다 (0 으로 두면 공급을 아예 안 본다).
 const SUPPLY_TILT = 0.35;              // 최대 ±35% 증폭/감쇠
 const SUPPLY_FULL_PCT = 25;            // 24시간 수량이 이만큼 변하면 압력 최대치
 const SUPPLY_ETA_HORIZON_MIN = 30;     // 이 시간 안에 소진될 것 같으면 '마름' 쪽으로 밀어올린다
@@ -4518,15 +4518,15 @@ function computeSupplyBadge(w) {
   const sp = computeSupplyPressure(w);
   if (sp === null) return null;
   let label, color;
-  if (sp >= 0.6)       { label = '물량 마름';   color = 'var(--accent)'; }
-  else if (sp >= 0.2)  { label = '물량 감소';   color = 'var(--accent)'; }
+  if (sp >= 0.6)       { label = '공급 마름';   color = 'var(--accent)'; }
+  else if (sp >= 0.2)  { label = '공급 감소';   color = 'var(--accent)'; }
   else if (sp <= -0.6) { label = '매물 쏟아짐'; color = '#38BDF8'; }
   else if (sp <= -0.2) { label = '매물 증가';   color = '#38BDF8'; }
   else                 { label = '공급 안정';   color = 'var(--dim)'; }
   const pct = Math.round(Math.abs(sp) * SUPPLY_TILT * 100);
   return {
     sp,
-    text: `공급 ${label}`,
+    text: label,
     color,
     tooltip: `24시간 수량 변화와 지금 빠지는 속도로 잰 공급 압력이에요 (${sp >= 0 ? '+' : ''}${sp.toFixed(2)}).\n`
       + (Math.abs(sp) < 0.2

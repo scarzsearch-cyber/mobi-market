@@ -878,24 +878,35 @@ function openSettingsOnGithub() {
   const text = serializeSettings(buildServerSettings());
   copyServerSettings(); // 프리필이 안 먹는 경우를 위해 항상 복사해둔다
 
-  // 파일이 이미 있으면 edit, 없으면 new 가 맞다 (없는데 edit 로 가면 404).
-  // edit 화면은 프리필을 지원하지 않으므로 그 경우엔 붙여넣기로 안내한다.
-  fetch('alerts/settings.json?cb=' + Date.now())
-    .then(res => res.ok)
-    .catch(() => false)
-    .then(exists => {
-      let url;
-      if (exists) {
-        url = `https://github.com/${loc.owner}/${loc.repo}/edit/main/alerts/settings.json`;
-        setHint('복사했어요 — 열린 편집기에서 전체 선택(Ctrl+A) 후 붙여넣고 Commit 하세요.');
-      } else {
-        const enc = encodeURIComponent(text);
-        url = `https://github.com/${loc.owner}/${loc.repo}/new/main?filename=alerts/settings.json`
-            + (enc.length <= GH_URL_VALUE_MAX ? `&value=${enc}` : '');
-        setHint('복사했어요 — 내용이 이미 채워져 있으면 그대로 Commit, 비어 있으면 붙여넣고 Commit 하세요.');
-      }
-      window.open(url, '_blank', 'noopener');
-    });
+  // ★ fetch 를 기다렸다가 window.open 을 부르면 두 가지가 깨진다:
+  //   ① 클릭 제스처와 끊겨서 팝업 차단에 걸릴 수 있고
+  //   ② 사용자는 이미 다른 탭으로 넘어간 뒤라 이쪽 안내를 못 본다.
+  // 파일 존재 여부는 checkSettingsDrift() 가 이미 알고 있으므로 그 상태를 그대로 쓴다.
+  const exists = settingsSyncState.status !== 'absent';
+
+  if (exists) {
+    // GitHub 편집(edit) 화면은 내용 프리필을 지원하지 않는다 — 기존 파일이 그대로 열린다.
+    // 그래서 "지금 보이는 건 옛 내용이고, 덮어써야 한다"를 넘어가기 전에 확실히 알려야 한다.
+    // 작은 힌트 줄로는 안 된다(탭을 옮기면 안 보인다) — 그래서 여기서만 모달을 쓴다.
+    alert(`설정을 클립보드에 복사했어요.
+
+이제 GitHub 편집기가 열립니다. 거기 보이는 건 서버에 저장된 '옛 내용'이에요.
+
+① 코드 영역을 클릭
+② Ctrl+A (전체 선택)
+③ Ctrl+V (붙여넣기)
+④ 아래 초록색 [Commit changes] 클릭
+
+지금 감시 ${watchList.length}개가 올라갑니다.`);
+    window.open(`https://github.com/${loc.owner}/${loc.repo}/edit/main/alerts/settings.json`,
+                '_blank', 'noopener');
+    setHint(`GitHub 편집기에서 Ctrl+A → Ctrl+V → Commit 하시면 감시 ${watchList.length}개가 서버에 반영돼요.`);
+  } else {
+    const enc = encodeURIComponent(text);
+    window.open(`https://github.com/${loc.owner}/${loc.repo}/new/main?filename=alerts/settings.json`
+                + (enc.length <= GH_URL_VALUE_MAX ? `&value=${enc}` : ''), '_blank', 'noopener');
+    setHint('복사했어요 — 내용이 이미 채워져 있으면 그대로 Commit, 비어 있으면 붙여넣고 Commit 하세요.');
+  }
 }
 
 // 토큰이 없어도 도는 확인 경로 — 같은 도메인의 파일이라 그냥 읽힌다.

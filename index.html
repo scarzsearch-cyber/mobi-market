@@ -361,7 +361,7 @@
             <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
               <span style="min-width:120px;">🤖 서버 감시 동기화</span>
               <span class="hint" id="settingsSyncStatus" style="margin:0;">확인 중…</span>
-              <button class="ghost" onclick="syncSettingsToRepo()">지금 올리기</button>
+              <button class="ghost" id="syncNowBtn" onclick="syncSettingsToRepo()" style="display:none;">지금 올리기</button>
             </div>
             <div class="watch-alert-subform">
               <span class="hint" style="margin:0; min-width:100px;">토큰 없이 올리기</span>
@@ -789,7 +789,13 @@ function scheduleSettingsSync(reason) {
 async function syncSettingsToRepo() {
   const token = getGhToken();
   const loc = repoFromLocation();
-  if (!token || !loc) return;
+  // 버튼을 눌렀는데 아무 일도 안 일어나는 것이 제일 나쁘다 — 왜 안 되는지, 대신 뭘 누르면
+  // 되는지 말해준다. (종전엔 토큰이 없으면 조용히 return 해서 고장난 것처럼 보였다.)
+  if (!loc) { setHint('GitHub Pages 주소로 열었을 때만 쓸 수 있어요.', true); return; }
+  if (!token) {
+    setHint('이 버튼은 GitHub 토큰이 있어야 동작해요 — 토큰 없이 올리시려면 아래 [📤 GitHub에 올리기] 버튼을 쓰세요.', true);
+    return;
+  }
   const api = `https://api.github.com/repos/${loc.owner}/${loc.repo}/contents/alerts/settings.json`;
   const auth = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' };
   const body = serializeSettings(buildServerSettings());
@@ -920,15 +926,19 @@ function renderSettingsSyncStatus() {
   const el = document.getElementById('settingsSyncStatus');
   if (!el) return;
   const hasToken = !!getGhToken();
+  // 토큰이 없으면 [지금 올리기]는 눌러도 못 하는 버튼이라 감춘다.
+  const nowBtn = document.getElementById('syncNowBtn');
+  if (nowBtn) nowBtn.style.display = hasToken ? '' : 'none';
   const S = settingsSyncState;
   const color = { synced: 'var(--up)', drift: 'var(--down)', absent: 'var(--down)',
                   error: 'var(--down)', pending: 'var(--accent)' }[S.status] || 'var(--dim)';
   let text;
   if (S.status === 'pending') text = `잠시 후 자동으로 올려요… (${S.msg})`;
   else if (S.status === 'synced') text = `✅ 동기화됨 — ${S.msg}`;
-  else if (S.status === 'drift') text = (hasToken ? '⏳ 다름 — 곧 자동으로 맞춰요. ' : '⚠️ 서버 설정이 여기와 달라요. ') + S.msg;
+  else if (S.status === 'drift') text = (hasToken ? '⏳ 다름 — 곧 자동으로 맞춰요. ' : '⚠️ 서버 설정이 여기와 달라요. ') + S.msg
+    + (hasToken ? '' : ' → 아래 [📤 GitHub에 올리기]를 누르세요.');
   else if (S.status === 'absent' || S.status === 'error') text = '⚠️ ' + S.msg;
-  else text = hasToken ? '변경이 생기면 자동으로 올려요.' : '토큰을 넣으면 자동으로 올라가요 (지금은 확인만 합니다).';
+  else text = hasToken ? '변경이 생기면 자동으로 올려요.' : '아래 [📤 GitHub에 올리기]로 올리시면 돼요.';
   el.textContent = text;
   el.style.color = color;
 }

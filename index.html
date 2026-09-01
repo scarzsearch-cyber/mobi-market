@@ -403,6 +403,21 @@
             <div id="alertOutcomePanel" style="max-height:260px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px;">
               <div class="hint" style="margin:0;">알림이 울리고 30분이 지나면 여기에 결과가 쌓여요.</div>
             </div>
+
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:10px; margin-top:12px;">
+              <span style="min-width:120px;">📉 수량 → 가격 검증</span>
+              <button class="ghost" onclick="renderSupplyVerification()">지금 분석</button>
+              <button class="ghost" onclick="exportSupplyLogCsv()">CSV 내보내기</button>
+              <button class="ghost" onclick="clearSupplyLog()">기록 초기화</button>
+            </div>
+            <div class="hint" style="margin:0 0 8px;">
+              &quot;수량이 줄면 가격이 오른다&quot;는 이 앱 신호 점수의 핵심 가정이에요. 감시 중인 아이템의
+              (시각·최저가·수량)을 10분에 하나씩 남겨두고, 그 가정이 실제로 맞는지 직접 세어봅니다.
+              신호 점수의 공급 가중치는 아직 이 데이터로 검증된 값이 아니라 시장 구조에서 나온 가설이에요.
+            </div>
+            <div id="supplyVerifyPanel" style="border:1px solid var(--line); border-radius:8px; padding:10px; font-size:12.5px;">
+              <div class="hint" style="margin:0;">[지금 분석]을 누르면 지금까지 쌓인 기록으로 계산해요.</div>
+            </div>
           </div>
         </div>
 
@@ -534,6 +549,13 @@ let alertOutcomeLog = []; // [{ts, kindId, itemName, alertLabel, direction, pric
 const ALERT_EVAL_WINDOW_MS = 30 * 60000; // 알림이 울리고 30분 뒤 가격을 다시 확인해서 적중 여부를 판정
 const ALERT_OUTCOME_LOG_MAX = 200;
 let apiKeyPoolCache = null; // API 키 로테이션 풀 캐시 — loadStateFromStorage()보다 먼저 선언돼야 함 (TDZ 방지)
+// 공급·가격 장기 기록 — loadStateFromStorage()가 이걸 복원하는데 그 호출이 스크립트 앞쪽에서
+// 일어나므로 여기서 선언해야 한다. 아래쪽(pushSupplyLog 근처)에 두면 두 가지가 한꺼번에 터진다:
+//   ① 복원 시점엔 아직 초기화 전이라 TDZ 오류 ② 뒤늦게 실행된 `let supplyLog = {}` 가
+//   방금 복원한 기록을 도로 빈 객체로 덮어쓴다. 두 번째가 특히 조용해서 위험하다.
+let supplyLog = {};
+let supplyLogDirty = false;
+let supplyLogDisabled = false; // 저장 공간이 꽉 차면 켜진다 — 그 뒤로는 조용히 기록만 멈춘다
 let focusKindIds = new Set();   // "집중 감시" 중인 kind_id 집합 — 이 아이템들만 더 빠른 주기로 갱신 (최대 FOCUS_MAX_ITEMS개)
 let focusTimer = null;
 const FOCUS_INTERVAL_MS = 15000; // 안전 한도 안에서 잡은 집중 감시 주기(15초) — 아이템이 여러 개면 한 주기 안에서 순서대로 갱신되므로 요청 큐가 알아서 속도를 맞춘다
@@ -575,6 +597,7 @@ const LS_KEYS = {
   pendingAlertEvals: 'ggMarket.pendingAlertEvals',
   craftMaterialRows: 'ggMarket.craftMaterialRows',
   craftEquipPrice: 'ggMarket.craftEquipPrice',
+  supplyLog: 'ggMarket.supplyLog',
 };
 
 // 카카오 "나에게 보내기"는 기본 앱 기준 1일 호출 횟수 제한이 있다(보통 100회).
@@ -826,6 +849,21 @@ function loadStateFromStorage() {
       }
     }
   } catch (e) { console.error('[복원 실패] 집중 감시', e); }
+
+  try {
+    const savedLog = localStorage.getItem(LS_KEYS.supplyLog);
+    if (savedLog) {
+      const parsed = JSON.parse(savedLog);
+      // 형식이 어긋난 항목은 통째로 버린다 — 분석 쪽에서 매번 방어하는 것보다 여기서 한 번 거른다.
+      if (parsed && typeof parsed === 'object') {
+        Object.entries(parsed).forEach(([k, v]) => {
+          if (v && typeof v.t0 === 'number' && Array.isArray(v.s)) {
+            supplyLog[k] = { t0: v.t0, s: v.s.filter(x => Array.isArray(x) && x.length === 3) };
+          }
+        });
+      }
+    }
+  } catch (e) { console.error('[복원 실패] 공급 기록', e); }
 }
 
 // 표시용 봉 단위 정의: 원본 해상도별로 몇 개씩 묶어 보여줄지.
@@ -980,6 +1018,7 @@ window.addEventListener('beforeunload', () => {
   saveWatchStateToStorage();
   saveSearchStateToStorage();
   saveCraftStateToStorage();
+  if (supplyLogDirty) saveSupplyLog(); // 1분 주기 저장을 못 기다리고 닫는 경우 대비
 });
 
 // 페이지를 열면 저장된 마지막 검색어(없으면 기본값 파동의 영혼석)를 자동 조회하고,
@@ -3125,6 +3164,225 @@ function computeDepletionEtaMin(kindId, currentCount) {
   return currentCount / rate;
 }
 
+// ---- 공급·가격 기록 (가설 검증용) ----
+// "수량이 줄면 가격이 오른다"는 이 앱의 핵심 가정인데, 지금껏 그걸 확인할 데이터가 없었다.
+// countHistoryByKind 는 메모리에 6개만 들고 있다가 새로고침하면 날아가고, API 도 수량
+// 시계열을 주지 않는다. 그래서 신호 스코어의 공급 가중치(SUPPLY_TILT)는 시장 구조에서
+// 나온 가설일 뿐 측정된 값이 아니었다.
+//
+// 여기서 (시각, 최저가, 매물 수량) 세 값만 꾸준히 남겨두면, 나중에 "수량이 N% 줄었을 때
+// 그 다음 한 시간 동안 가격이 실제로 어떻게 됐나"를 직접 셀 수 있다. 판정은 사람이 아니라
+// 데이터가 하도록 만드는 것이 목적이다.
+//
+// 저장 형식은 일부러 배열이다 — {ts,price,count} 객체로 넣으면 키 이름이 매 샘플마다
+// 반복돼서 localStorage 를 3배쯤 더 먹는다. t0 기준 경과 '분'으로 접어 넣는다.
+//   { [kindId]: { t0: <기준 ms>, s: [[경과분, 최저가, 수량], ...] } }
+const SUPPLY_LOG_INTERVAL_MIN = 10;   // 아이템당 이 간격으로만 남긴다 (자동갱신은 1분마다라 그대로 쌓으면 폭증)
+const SUPPLY_LOG_MAX_PER_KIND = 1200; // 10분 간격 기준 약 8일치
+// (supplyLog / supplyLogDirty / supplyLogDisabled 는 파일 맨 위에서 선언한다 — TDZ 방지. 아래 주석 참고)
+
+function pushSupplyLog(kindId, price, count, ts) {
+  if (supplyLogDisabled) return;
+  if (price === null || price === undefined || count === null || count === undefined) return;
+  const key = String(kindId);
+  let entry = supplyLog[key];
+  if (!entry) entry = supplyLog[key] = { t0: ts, s: [] };
+  const tMin = Math.round((ts - entry.t0) / 60000);
+  const last = entry.s[entry.s.length - 1];
+  // 같은 10분 구간 안이면 덮어쓰지 않고 그냥 건너뛴다(첫 관측을 남긴다).
+  if (last && (tMin - last[0]) < SUPPLY_LOG_INTERVAL_MIN) return;
+  entry.s.push([tMin, Math.round(price), count]);
+  while (entry.s.length > SUPPLY_LOG_MAX_PER_KIND) entry.s.shift();
+  supplyLogDirty = true;
+}
+
+function saveSupplyLog() {
+  if (supplyLogDisabled) return;
+  try {
+    localStorage.setItem(LS_KEYS.supplyLog, JSON.stringify(supplyLog));
+    supplyLogDirty = false;
+  } catch (e) {
+    // 용량 초과 — 아이템마다 오래된 절반을 버리고 한 번만 다시 시도한다.
+    // 그래도 안 되면 기록을 멈춘다. 기록은 부가 기능이라, 이것 때문에 감시·알림 같은
+    // 본래 기능의 저장(감시 목록 등)까지 실패하게 두면 안 된다.
+    try {
+      Object.values(supplyLog).forEach(en => { en.s = en.s.slice(Math.floor(en.s.length / 2)); });
+      localStorage.setItem(LS_KEYS.supplyLog, JSON.stringify(supplyLog));
+      supplyLogDirty = false;
+    } catch (e2) {
+      supplyLogDisabled = true;
+      supplyLogDirty = false;
+    }
+  }
+}
+
+// 기록은 10분에 한 번씩만 쌓이지만 아이템마다 시점이 어긋나므로, 매번 저장하지 않고
+// 1분에 한 번 모아서 쓴다 (localStorage 쓰기는 동기라 자주 하면 화면이 끊긴다).
+setInterval(() => { if (supplyLogDirty) saveSupplyLog(); }, 60000);
+
+// 기록 하나를 절대시각으로 펴서 돌려준다. 분석 쪽에서 t0 를 신경 쓰지 않게 하기 위함.
+function supplyLogSamples(kindId) {
+  const entry = supplyLog[String(kindId)];
+  if (!entry || !Array.isArray(entry.s) || !entry.s.length) return [];
+  return entry.s.map(([tMin, price, count]) => ({ ts: entry.t0 + tMin * 60000, price, count }));
+}
+
+function supplyLogTotalSamples() {
+  return Object.values(supplyLog).reduce((n, e) => n + ((e && e.s) ? e.s.length : 0), 0);
+}
+
+// ---- 「수량이 줄면 가격이 오르는가」 검증 ----
+// 각 기록 시점 t 마다 두 값을 만든다:
+//   과거쪽 = (t 의 수량 - t-W 의 수량) / t-W 의 수량  → 그때까지 공급이 얼마나 빠졌나
+//   미래쪽 = (t+W 의 가격 - t 의 가격) / t 의 가격     → 그 다음 가격이 어떻게 됐나
+// 그리고 과거쪽을 구간별로 묶어 미래쪽의 중앙값을 낸다. 가설이 맞다면 "수량 급감" 칸의
+// 미래 가격 변화가 뚜렷한 양수여야 하고, "매물 급증" 칸은 음수여야 한다.
+//
+// ⚠ 이건 관찰이지 인과의 증명이 아니다. 수량과 가격이 같은 원인(패치·이벤트)에 함께
+// 반응했을 수도 있다. 그리고 창이 겹치므로 표본 n 은 독립 관측 수가 아니다 — 그래서
+// 비중첩 창 수를 항상 같이 표시한다. n 이 300 이어도 비중첩이 5 면 근거는 5개짜리다.
+const VERIFY_WINDOW_MIN = 60;      // 과거·미래 창 (분)
+const VERIFY_TOLERANCE_MIN = 20;   // 창 경계에서 이만큼까지 떨어진 샘플은 그 시점으로 인정
+
+function sampleNear(samples, targetTs, tolMs) {
+  let best = null, bestGap = Infinity;
+  for (const s of samples) {
+    const gap = Math.abs(s.ts - targetTs);
+    if (gap < bestGap) { bestGap = gap; best = s; }
+  }
+  return (best && bestGap <= tolMs) ? best : null;
+}
+
+function median(arr) {
+  if (!arr.length) return null;
+  const a = arr.slice().sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+const VERIFY_BUCKETS = [
+  { key: 'plunge', label: '수량 급감 (−10%↓)',  test: v => v <= -10 },
+  { key: 'down',   label: '수량 감소 (−10~−3%)', test: v => v <= -3 && v > -10 },
+  { key: 'flat',   label: '수량 안정 (±3%)',     test: v => v > -3 && v < 3 },
+  { key: 'up',     label: '매물 증가 (+3~+10%)', test: v => v >= 3 && v < 10 },
+  { key: 'surge',  label: '매물 급증 (+10%↑)',   test: v => v >= 10 },
+];
+
+function analyzeSupplyEffect() {
+  const W = VERIFY_WINDOW_MIN * 60000;
+  const tol = VERIFY_TOLERANCE_MIN * 60000;
+  const buckets = {};
+  VERIFY_BUCKETS.forEach(b => { buckets[b.key] = []; });
+  let pairs = 0, spanMs = 0, itemsUsed = 0;
+
+  Object.keys(supplyLog).forEach(key => {
+    const samples = supplyLogSamples(key);
+    if (samples.length < 3) return;
+    itemsUsed++;
+    spanMs += samples[samples.length - 1].ts - samples[0].ts;
+    for (const cur of samples) {
+      const past = sampleNear(samples, cur.ts - W, tol);
+      const future = sampleNear(samples, cur.ts + W, tol);
+      if (!past || !future) continue;
+      if (!past.count || !cur.price) continue;
+      if (past === cur || future === cur) continue;
+      const supplyPct = (cur.count - past.count) / past.count * 100;
+      const pricePct = (future.price - cur.price) / cur.price * 100;
+      if (!isFinite(supplyPct) || !isFinite(pricePct)) continue;
+      const b = VERIFY_BUCKETS.find(x => x.test(supplyPct));
+      if (b) { buckets[b.key].push(pricePct); pairs++; }
+    }
+  });
+
+  // 비중첩 창 수 — 한 관측이 과거 W + 미래 W 를 쓰므로 2W 마다 하나씩만 독립이다.
+  const independent = Math.floor(spanMs / (2 * W));
+  return {
+    pairs, independent, itemsUsed,
+    rows: VERIFY_BUCKETS.map(b => ({
+      label: b.label,
+      n: buckets[b.key].length,
+      med: median(buckets[b.key]),
+    })),
+  };
+}
+
+function renderSupplyVerification() {
+  const box = document.getElementById('supplyVerifyPanel');
+  if (!box) return;
+  const total = supplyLogTotalSamples();
+  if (total < 6) {
+    box.innerHTML = `<div class="hint" style="margin:0;">아직 기록이 ${total}개예요. 탭을 켜둔 채로 시간이 지나면 여기에 결과가 쌓여요 — 아이템당 10분에 하나씩 쌓이니, 의미 있는 판정에는 최소 하루는 필요해요.</div>`;
+    return;
+  }
+  const r = analyzeSupplyEffect();
+  if (!r.pairs) {
+    box.innerHTML = `<div class="hint" style="margin:0;">기록은 ${total}개 있는데 아직 ${VERIFY_WINDOW_MIN}분 앞뒤가 다 있는 구간이 없어요. 조금 더 모이면 나와요.</div>`;
+    return;
+  }
+  const rowsHtml = r.rows.map(row => {
+    const has = row.n > 0 && row.med !== null;
+    const color = !has ? 'var(--dim)' : (row.med > 0 ? 'var(--up)' : row.med < 0 ? 'var(--down)' : 'var(--dim)');
+    const val = has ? `${row.med >= 0 ? '+' : ''}${row.med.toFixed(2)}%` : '—';
+    return `<div class="analysis-row"><span class="a-label">${row.label}</span>
+      <span class="a-value" style="color:${color};">${val} <span style="color:var(--dim); font-weight:400;">(n=${row.n})</span></span></div>`;
+  }).join('');
+
+  // 가설이 맞다면 급감 칸이 급증 칸보다 확실히 높아야 한다. 그 차이를 한 줄로 요약한다.
+  const plunge = r.rows[0], surge = r.rows[4];
+  let verdict;
+  if (r.independent < 5) {
+    verdict = `아직 판정하기엔 이릅니다 — 비중첩 창이 ${r.independent}개뿐이에요. 겹치는 구간을 빼고 세면 사실상 ${r.independent}번 관측한 셈이라, 방향을 말할 근거가 안 됩니다.`;
+  } else if (plunge.med === null || surge.med === null) {
+    verdict = '아직 양 끝(수량 급감·매물 급증) 구간이 둘 다 관측되지 않았어요. 한쪽만으로는 비교가 안 됩니다.';
+  } else {
+    const gap = plunge.med - surge.med;
+    verdict = gap > 0.5
+      ? `가설과 같은 방향입니다 — 수량이 급감한 뒤가 급증한 뒤보다 ${gap.toFixed(2)}%p 높았어요.`
+      : gap < -0.5
+      ? `가설과 반대 방향입니다 — 수량이 급감한 뒤가 오히려 ${Math.abs(gap).toFixed(2)}%p 낮았어요. SUPPLY_TILT 를 줄이거나 0 으로 두는 걸 고려해보세요.`
+      : `뚜렷한 차이가 없습니다 (${gap.toFixed(2)}%p). 지금 데이터로는 공급이 가격을 끄는 증거가 약해요.`;
+  }
+
+  box.innerHTML = `
+    <div class="hint" style="margin:0 0 8px;">수량이 ${VERIFY_WINDOW_MIN}분간 어떻게 변했는지에 따라, 그 <b>다음</b> ${VERIFY_WINDOW_MIN}분간 최저가가 실제로 어떻게 움직였는지의 중앙값이에요.</div>
+    ${rowsHtml}
+    <div class="analysis-row a-note" style="border-top:1px solid var(--line); margin-top:6px; padding-top:8px;">
+      <span class="a-value">${verdict}</span>
+    </div>
+    <div class="hint" style="margin:8px 0 0;">
+      기록 ${total}개 · 아이템 ${r.itemsUsed}개 · 관측쌍 ${r.pairs}개 · <b>비중첩 창 ${r.independent}개</b><br>
+      n 은 구간이 서로 겹치므로 독립 관측 수가 아니에요 — 근거의 크기는 비중첩 창 수로 보세요.
+      그리고 이건 관찰이지 인과의 증명이 아니에요. 수량과 가격이 같은 원인(패치·이벤트)에 함께 반응했을 수도 있어요.
+    </div>`;
+}
+
+function exportSupplyLogCsv() {
+  const rows = [['kind_id', 'name', 'time_kst', 'min_price', 'total_count']];
+  Object.keys(supplyLog).forEach(key => {
+    const w = watchList.find(x => String(x.kind_id) === key);
+    const name = w ? w.name : '';
+    supplyLogSamples(key).forEach(s => {
+      const d = new Date(s.ts + KST_OFFSET_MS);
+      const t = d.toISOString().replace('T', ' ').slice(0, 19);
+      rows.push([key, name, t, s.price, s.count]);
+    });
+  });
+  if (rows.length === 1) { setHint('아직 내보낼 기록이 없어요.', true); return; }
+  const csv = '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  dlBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+         `mobi-supply-log-${new Date().toISOString().slice(0, 10)}.csv`);
+  setHint(`✅ 기록 ${rows.length - 1}줄을 CSV로 내려받았습니다.`);
+}
+
+function clearSupplyLog() {
+  if (!confirm('공급·가격 기록을 전부 지울까요? 되돌릴 수 없어요.')) return;
+  supplyLog = {};
+  supplyLogDisabled = false;
+  try { localStorage.removeItem(LS_KEYS.supplyLog); } catch (e) {}
+  renderSupplyVerification();
+  setHint('기록을 초기화했습니다.');
+}
+
 // ---- 단기 추세 예측 (다음 N분 예상가) ----
 // 확정적인 예측이 아니라, "최근 짧은 추세를 그대로 연장하면 대략 이 정도"라는 참고치일 뿐이다.
 // 최근 가격 이력에 단순 선형회귀를 돌려 기울기를 구하고, 그 기울기를 N분만큼 밀어서 투영한다.
@@ -4092,6 +4350,9 @@ async function refreshWatchItem(w) {
 
     // 단기 추세 예측용 — 품절이 아닐 때만 가격 이력을 쌓는다 (품절=null 값이 껴들면 회귀선이 왜곡됨)
     if (!found.is_sold_out) pushPriceHistory(w.kind_id, w.price, w.lastUpdated);
+
+    // 가설 검증용 장기 기록 — 품절이면 가격이 없어서 쌍을 못 만드므로 건너뛴다.
+    if (!found.is_sold_out) pushSupplyLog(w.kind_id, w.price, found.total_count, w.lastUpdated);
 
     // 변동성 급등 알림 — 평소(7일 변동계수) 대비 지금이 몇 배로 흔들리는지.
     // 한 번 울리면 배수가 임계값 아래로 충분히 내려가야 재무장한다(경계선에서 계속 울리는 것 방지).

@@ -127,6 +127,48 @@ for k in ("MOBI_API_KEY", "KAKAO_REST_KEY", "KAKAO_REFRESH_TOKEN"):
     os.environ.pop(k, None)
 check("main() 종료코드", watch.main(), 0)
 
+
+# ── [11] 천장 기준 신호 (v2) ──
+print("")
+print("[11] 천장 기준 신호 — 평균 100 이면 천장 150")
+w11 = {"kind_id": 1, "name": "테스트", "avgPrice": 100, "sellHighAlert": True, "sellHighPct": 90,
+       "buyLowAlert": True, "buyLowPct": 60}
+base = {"price": 100, "count": 10, "soldOut": False, "fired": {}}
+msgs, st = watch.evaluate(snap(price=140), base, w11, [])       # 93%
+check("93% → 천장근접 1건", len(msgs), 1)
+check("문구에 천장 150", "천장(150)" in msgs[0], True)
+check("sellHigh fired 기록", st["fired"].get("sellHigh"), True)
+msgs, st = watch.evaluate(snap(price=145), {**base, "fired": {"sellHigh": True}}, w11, [])
+check("계속 천장 근처면 재전송 안 함", len(msgs), 0)
+msgs, st = watch.evaluate(snap(price=110), {**base, "fired": {"sellHigh": True}}, w11, [])  # 73% < 80
+check("80% 아래로 내려오면 재무장", st["fired"].get("sellHigh"), None)
+msgs, st = watch.evaluate(snap(price=80), base, w11, [])        # 53%
+check("53% → 저가 1건", len(msgs), 1)
+check("저가 문구", "살 때" in msgs[0], True)
+msgs, st = watch.evaluate(snap(price=100), {**base, "fired": {"buyLow": True}}, w11, [])  # 67% < 70
+check("70% 아래면 아직 재무장 안 함", st["fired"].get("buyLow"), True)
+msgs, st = watch.evaluate(snap(price=110), {**base, "fired": {"buyLow": True}}, w11, [])  # 73% > 70
+check("70% 넘으면 재무장", st["fired"].get("buyLow"), None)
+msgs, st = watch.evaluate(snap(price=120), base, w11, [])       # 80% 중간
+check("중간(80%)이면 아무것도 안 울림", len(msgs), 0)
+msgs, st = watch.evaluate(snap(price=140), base, {**w11, "avgPrice": None}, [])
+check("평균가 없으면 천장 신호 없음", len(msgs), 0)
+msgs, st = watch.evaluate(snap(price=140, sold_out=True), base, w11, [])
+check("품절이면 천장 신호 없음", len(msgs), 0)
+
+print("")
+print("[12] 되사기 — 판매가 100 이면 85 아래가 남는 구간")
+w12 = {"kind_id": 1, "name": "테스트", "rebuyAlert": True, "mySellPrice": 100}
+msgs, st = watch.evaluate(snap(price=80), base, w12, [])
+check("80 → 되사기 1건 (+5)", len(msgs), 1)
+check("이득 +5 표기", "+5" in msgs[0], True)
+msgs, st = watch.evaluate(snap(price=85), base, w12, [])
+check("85 = 손익분기 → 안 울림", len(msgs), 0)
+msgs, st = watch.evaluate(snap(price=90), {**base, "fired": {"rebuy": True}}, w12, [])
+check("다시 올라가면 재무장", st["fired"].get("rebuy"), None)
+msgs, st = watch.evaluate(snap(price=80), base, {**w12, "mySellPrice": None}, [])
+check("판매가 없으면 되사기 없음", len(msgs), 0)
+
 print("\n" + ("─" * 50))
 print("❌ 실패 " + str(len(fails)) + "건: " + ", ".join(fails) if fails else "✅ 전부 통과")
 sys.exit(1 if fails else 0)

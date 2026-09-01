@@ -349,6 +349,37 @@ def evaluate(item, prev, w, alerts):
                 if state["fired"].get(aid) and released:
                     state["fired"].pop(aid, None)
 
+    # ── 천장 기준 신호 (v2) — index.html 의 bandPosPct / rebuyInfo 와 같은 규약 ──
+    # 판매가 상한 = 3일 평균 x 1.5 (소유자 실측). 평균가는 사람이 앱에 입력해 settings.json 으로
+    # 넘어온다. 한 번 울리면 기준에서 10%p 벗어나야 재무장한다 (경계선 진동 방지).
+    avg = w.get("avgPrice")
+    if avg and avg > 0 and price is not None:
+        ceiling = round(avg * 1.5)
+        pos = price / ceiling * 100
+        if w.get("sellHighAlert"):
+            th = w.get("sellHighPct") or 90
+            if pos >= th and not state["fired"].get("sellHigh"):
+                state["fired"]["sellHigh"] = True
+                msgs.append(f"🔴 {name} 최저가 {fmt(price)} = 천장({fmt(ceiling)})의 {pos:.0f}% — 물량이 말랐어요. 천장 근처에 걸어두면 팔릴 때예요")
+            elif state["fired"].get("sellHigh") and pos < th - 10:
+                state["fired"].pop("sellHigh", None)
+        if w.get("buyLowAlert"):
+            th = w.get("buyLowPct") or 60
+            if pos <= th and not state["fired"].get("buyLow"):
+                state["fired"]["buyLow"] = True
+                msgs.append(f"🟢 {name} 최저가 {fmt(price)} = 천장({fmt(ceiling)})의 {pos:.0f}% — 천장 대비 싸요. 살 때예요")
+            elif state["fired"].get("buyLow") and pos > th + 10:
+                state["fired"].pop("buyLow", None)
+    sell = w.get("mySellPrice")
+    if w.get("rebuyAlert") and sell and sell > 0 and price is not None:
+        net = sell * 0.85
+        profit = net - price
+        if profit > 0 and not state["fired"].get("rebuy"):
+            state["fired"]["rebuy"] = True
+            msgs.append(f"🔁 {name} 최저가 {fmt(price)} < 내 판매가 {fmt(sell)}의 85%({fmt(round(net))}) — 지금 되사면 개당 +{fmt(round(profit))}")
+        elif state["fired"].get("rebuy") and profit <= 0:
+            state["fired"].pop("rebuy", None)
+
     return msgs, state
 
 

@@ -101,6 +101,9 @@
   .watch-item button.toggle-on.highprice, .watch-item-toggles button.toggle-on.highprice{background:var(--accent); color:#1a1208; border-color:var(--accent); font-weight:700;}
   .watch-item button.toggle-on.dropwarn, .watch-item-toggles button.toggle-on.dropwarn{background:var(--down); color:#2a0906; border-color:var(--down); font-weight:700;}
   .watch-item button.toggle-on.volwarn, .watch-item-toggles button.toggle-on.volwarn{background:#a78bfa; color:#1e1533; border-color:#a78bfa; font-weight:700;}
+  .watch-item button.toggle-on.sellhigh, .watch-item-toggles button.toggle-on.sellhigh{background:var(--down); color:#2a0906; border-color:var(--down); font-weight:700;}
+  .watch-item button.toggle-on.buylow, .watch-item-toggles button.toggle-on.buylow{background:var(--up); color:#062012; border-color:var(--up); font-weight:700;}
+  .watch-item button.toggle-on.rebuy, .watch-item-toggles button.toggle-on.rebuy{background:var(--accent); color:#1a1208; border-color:var(--accent); font-weight:700;}
   .watch-item-quickbtns button.detail-btn{border-color:var(--accent); color:var(--accent); font-weight:700;}
   .watch-item-quickbtns button.detail-btn.toggle-on{background:var(--accent); color:#1a1208;}
   .tools-tabbar{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:10px;}
@@ -686,6 +689,12 @@ function slimWatchItem(w) {
     listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
     listingDropPct: w.listingDropPct || 0,
     volAlert: !!w.volAlert, volThresholdMult: w.volThresholdMult || 2,
+    // 천장 기준 신호 (v2 전략): 평균가는 게임에서 읽어 사람이 입력한다 — API 로는 재현이 안 된다(오차 15%).
+    avgPrice: (w.avgPrice > 0) ? w.avgPrice : null, avgPriceAt: w.avgPriceAt || null,
+    mySellPrice: (w.mySellPrice > 0) ? w.mySellPrice : null,
+    sellHighAlert: !!w.sellHighAlert, sellHighPct: w.sellHighPct || 90,
+    buyLowAlert: !!w.buyLowAlert, buyLowPct: w.buyLowPct || 60,
+    rebuyAlert: !!w.rebuyAlert,
   };
 }
 
@@ -702,6 +711,12 @@ function restoreWatchItem(w) {
     listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
     listingDropPct: w.listingDropPct || 0,
     volAlert: !!w.volAlert, volThresholdMult: w.volThresholdMult || 2,
+    // 천장 기준 신호 (v2 전략): 평균가는 게임에서 읽어 사람이 입력한다 — API 로는 재현이 안 된다(오차 15%).
+    avgPrice: (w.avgPrice > 0) ? w.avgPrice : null, avgPriceAt: w.avgPriceAt || null,
+    mySellPrice: (w.mySellPrice > 0) ? w.mySellPrice : null,
+    sellHighAlert: !!w.sellHighAlert, sellHighPct: w.sellHighPct || 90,
+    buyLowAlert: !!w.buyLowAlert, buyLowPct: w.buyLowPct || 60,
+    rebuyAlert: !!w.rebuyAlert,
     depletionEtaMin: null,
   };
 }
@@ -3986,6 +4001,31 @@ function notifyVolatilitySpike(w, ratio) {
   // 적중률 로그에는 올리지 않는다 — 방향이 없는 알림이라 "맞았다/틀렸다"를 판정할 기준이 없다.
 }
 
+// ---- 천장 기준 알림 ----
+function notifySellHigh(w, pos) {
+  const c = ceilingOf(w);
+  const msg = `${w.name} 최저가 ${w.price.toLocaleString()} = 천장(${c.toLocaleString()})의 ${pos.toFixed(0)}% — 물량이 말랐어요. 천장 근처에 걸어두면 팔릴 때예요`;
+  showBrowserNotification('🔴 천장 근접 — 팔 때', msg, w.kind_id);
+  playAlertSound('highPrice');
+  flashTabTitle('🔴 천장 근접!');
+  queueKakaoAlert(w.kind_id, '🔴 천장 근접 — 팔 때', msg, w.name);
+}
+function notifyBuyLow(w, pos) {
+  const c = ceilingOf(w);
+  const msg = `${w.name} 최저가 ${w.price.toLocaleString()} = 천장(${c.toLocaleString()})의 ${pos.toFixed(0)}% — 천장 대비 싸요. 살 때예요`;
+  showBrowserNotification('🟢 천장 대비 저가 — 살 때', msg, w.kind_id);
+  playAlertSound('lowPrice');
+  flashTabTitle('🟢 저가!');
+  queueKakaoAlert(w.kind_id, '🟢 천장 대비 저가 — 살 때', msg, w.name);
+}
+function notifyRebuy(w, info) {
+  const msg = `${w.name} 최저가 ${w.price.toLocaleString()} < 내 판매가 ${w.mySellPrice.toLocaleString()}의 85%(${Math.round(info.net).toLocaleString()}) — 지금 되사면 개당 +${Math.round(info.profit).toLocaleString()}`;
+  showBrowserNotification('🔁 되사기 — 남는 구간', msg, w.kind_id);
+  playAlertSound('lowPrice');
+  flashTabTitle('🔁 되사기!');
+  queueKakaoAlert(w.kind_id, '🔁 되사기 — 남는 구간', msg, w.name);
+}
+
 function flashTabTitle(label = '🔔 가격 알림!') {
   const original = document.title;
   let on = false, count = 0;
@@ -4109,6 +4149,59 @@ function setHighestPriceConfirm(kindId, val) {
 }
 
 // 품귀(수량 급감) 알림 켜기/끄기
+// ---- 천장 신호 입력 ----
+function setAvgPrice(kindId, val) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const n = parseFloat(String(val).replace(/,/g, ''));
+  if (n > 0) { w.avgPrice = n; w.avgPriceAt = Date.now(); }
+  else { w.avgPrice = null; w.avgPriceAt = null; }
+  w._sellHighFired = false; w._buyLowFired = false;
+  saveWatchStateToStorage();
+  patchWatchItemDisplay(kindId);
+}
+function setMySellPrice(kindId, val) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const n = parseFloat(String(val).replace(/,/g, ''));
+  w.mySellPrice = (n > 0) ? n : null;
+  w._rebuyFired = false;
+  saveWatchStateToStorage();
+  patchWatchItemDisplay(kindId);
+}
+function toggleSellHighAlert(kindId) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  w.sellHighAlert = !w.sellHighAlert; w._sellHighFired = false;
+  saveWatchStateToStorage(); renderWatchList();
+}
+function setSellHighPct(kindId, val) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const n = parseFloat(val);
+  w.sellHighPct = (n >= 50 && n <= 100) ? n : 90; w._sellHighFired = false;
+  saveWatchStateToStorage(); patchWatchItemDisplay(kindId);
+}
+function toggleBuyLowAlert(kindId) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  w.buyLowAlert = !w.buyLowAlert; w._buyLowFired = false;
+  saveWatchStateToStorage(); renderWatchList();
+}
+function setBuyLowPct(kindId, val) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const n = parseFloat(val);
+  w.buyLowPct = (n >= 10 && n <= 90) ? n : 60; w._buyLowFired = false;
+  saveWatchStateToStorage(); patchWatchItemDisplay(kindId);
+}
+function toggleRebuyAlert(kindId) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  w.rebuyAlert = !w.rebuyAlert; w._rebuyFired = false;
+  saveWatchStateToStorage(); renderWatchList();
+}
+
 function toggleListingDropAlert(kindId) {
   const w = watchList.find(x => x.kind_id === kindId);
   if (!w) return;
@@ -4705,6 +4798,26 @@ async function refreshWatchItem(w) {
       }
     }
 
+    // ── 천장 기준 신호 (v2) — 한 번 울리면 기준에서 10%p 벗어나야 재무장 (경계선 진동 방지) ──
+    const bandPos = bandPosPct(w);
+    if (bandPos !== null) {
+      if (w.sellHighAlert) {
+        const th = w.sellHighPct || 90;
+        if (bandPos >= th && !w._sellHighFired) { w._sellHighFired = true; notifySellHigh(w, bandPos); }
+        else if (w._sellHighFired && bandPos < th - 10) w._sellHighFired = false;
+      }
+      if (w.buyLowAlert) {
+        const th = w.buyLowPct || 60;
+        if (bandPos <= th && !w._buyLowFired) { w._buyLowFired = true; notifyBuyLow(w, bandPos); }
+        else if (w._buyLowFired && bandPos > th + 10) w._buyLowFired = false;
+      }
+    }
+    const rb = rebuyInfo(w);
+    if (w.rebuyAlert && rb) {
+      if (rb.profit > 0 && !w._rebuyFired) { w._rebuyFired = true; notifyRebuy(w, rb); }
+      else if (w._rebuyFired && rb.profit <= 0) w._rebuyFired = false;
+    }
+
     patchWatchItemDisplay(w.kind_id); // 가격/수량/갱신시각만 가볍게 텍스트 교체 (알림 발동으로 배지가 바뀌는 경우는 checkPriceAlerts가 이미 전체 재렌더링을 처리함)
 
     // 스냅샷(가격/수량)뿐 아니라 캔들 차트용 시세이력도 백그라운드로 함께 갱신해두면 좋지만,
@@ -5173,6 +5286,71 @@ function toggleScoreBreakdown(kindId) {
   box.style.display = 'block';
 }
 
+// ---- 천장 기준 신호 (v2) ----
+// 이 거래소는 12시간마다 3일 거래 평균가를 재고, 판매가 상한 = 평균 x 1.5 다
+// (소유자 실측 4건: 삼림 22→33, 용비늘 289346→434019 는 정수까지 정확). 가격은 이 천장을
+// 못 넘으므로 "지금 최저가가 천장의 몇 %인가"가 싸다/비싸다의 유일하게 정확한 잣대다.
+// 평균가는 API 로 재현이 안 된다 — API 는 최저 매물만 기록하고 게임은 실제 체결가를
+// 평균내서 아이템에 따라 15% 까지 어긋난다(alerts/calibrate_avg.py). 그래서 사람이 입력한다.
+const CEILING_MULT = 1.5;
+const AVG_STALE_MS = 12 * 60 * 60 * 1000; // 게임 갱신 주기 — 이보다 오래된 입력은 낡았다고 표시
+
+function ceilingOf(w) { return (w.avgPrice > 0) ? Math.round(w.avgPrice * CEILING_MULT) : null; }
+
+// 최저가 / 천장 (%) — 100 이면 천장, 50 이면 천장의 절반. 데이터 없으면 null.
+function bandPosPct(w) {
+  const c = ceilingOf(w);
+  if (!c || w.price == null || w.soldOut) return null;
+  return w.price / c * 100;
+}
+
+function avgIsStale(w) { return !w.avgPriceAt || (Date.now() - w.avgPriceAt) > AVG_STALE_MS; }
+
+// 캐시된 시세이력으로 72시간 평균을 어림한다 — 입력칸의 힌트로만 쓴다(정답이 아니다).
+function estimateAvgFromHistory(kindId) {
+  const kindCache = historyCacheByKind[kindId];
+  if (!kindCache) return null;
+  const entries = Object.values(kindCache).filter(e => e && e.histData && e.histData.points && e.histData.points.length);
+  if (!entries.length) return null;
+  const cutoff = Date.now() - 72 * 60 * 60 * 1000;
+  let best = [];
+  for (const e of entries) {
+    const arr = e.histData.points.filter(p => p.close != null && p.time && new Date(p.time).getTime() >= cutoff).map(p => p.close);
+    if (arr.length > best.length) best = arr;
+  }
+  if (best.length < 3) return null;
+  return best.reduce((a, b) => a + b, 0) / best.length;
+}
+
+// 되사기: 내가 S 에 팔았으면 손에 0.85S. 지금 B 에 되사면 이득 = 0.85S − B.
+function rebuyInfo(w) {
+  if (!(w.mySellPrice > 0) || w.price == null || w.soldOut) return null;
+  const net = w.mySellPrice * (1 - SELL_FEE_PCT / 100);
+  return { net, profit: net - w.price, breakEven: net };
+}
+
+function computeBandBadge(w) {
+  const pos = bandPosPct(w);
+  if (pos === null) return null;
+  const c = ceilingOf(w);
+  const stale = avgIsStale(w);
+  let label, color;
+  if (pos >= (w.sellHighPct || 90))      { label = '천장 근접 · 팔 때'; color = 'var(--down)'; }
+  else if (pos <= (w.buyLowPct || 60))   { label = '천장 대비 싸다 · 살 때'; color = 'var(--up)'; }
+  else                                    { label = '중간'; color = 'var(--dim)'; }
+  const lines = [
+    `천장(평균×1.5) ${c.toLocaleString()} 기준으로 지금 최저가 ${w.price.toLocaleString()} 은 ${pos.toFixed(1)}% 위치예요.`,
+    `팔 때 기준 ${w.sellHighPct || 90}% 이상 · 살 때 기준 ${w.buyLowPct || 60}% 이하 (아이템별로 조절 가능)`,
+  ];
+  if (stale) lines.push('⏰ 평균가를 입력한 지 12시간이 넘었어요 — 게임에서 다시 확인해 주세요.');
+  return {
+    pos, ceiling: c, stale,
+    text: `천장의 ${pos.toFixed(0)}% · ${label}` + (stale ? ' ⏰' : ''),
+    color,
+    tooltip: lines.join(String.fromCharCode(10)),
+  };
+}
+
 // 공급 상태 배지 — 신호 배지가 "지금 사/팔"을 말한다면 이건 "가격이 어느 쪽으로 밀리는 중인가"다.
 // 일부러 --up/--down(초록/빨강)을 쓰지 않는다. 그 두 색은 이 앱에서 사기/팔기 방향을 뜻하는데,
 // 공급은 방향이 아니라 세기를 조절하는 값이라 같은 색을 쓰면 정반대로 읽힐 수 있다.
@@ -5383,6 +5561,30 @@ function patchWatchItemDisplay(kindId) {
     depleteEl.textContent = txt || '';
     depleteEl.style.display = txt ? 'inline-block' : 'none';
   }
+  const bandEl = document.getElementById(`wBand_${kindId}`);
+  if (bandEl) {
+    const b = computeBandBadge(w);
+    bandEl.textContent = b ? b.text : '';
+    bandEl.style.display = b ? 'inline-block' : 'none';
+    if (b) { bandEl.style.color = b.color; bandEl.title = b.tooltip; }
+  }
+  const ceilEl = document.getElementById(`wCeil_${kindId}`);
+  if (ceilEl) {
+    const c = ceilingOf(w);
+    ceilEl.innerHTML = c ? `천장 <b style="color:var(--text);">${c.toLocaleString()}</b>` : '천장 —';
+  }
+  const ageEl = document.getElementById(`wAvgAge_${kindId}`);
+  if (ageEl) {
+    const stale = avgIsStale(w);
+    ageEl.textContent = w.avgPriceAt ? (stale ? '⏰ ' : '') + timeAgoText(w.avgPriceAt).replace(' 갱신', ' 입력') : '';
+    ageEl.style.color = (stale && w.avgPrice) ? 'var(--down)' : 'var(--dim)';
+  }
+  const rbEl = document.getElementById(`wRebuy_${kindId}`);
+  if (rbEl) {
+    const rb = rebuyInfo(w);
+    rbEl.textContent = rb ? `되사기 ${rb.profit > 0 ? '+' : ''}${Math.round(rb.profit).toLocaleString()}/개` : '';
+    rbEl.style.color = rb ? (rb.profit > 0 ? 'var(--up)' : 'var(--dim)') : 'var(--dim)';
+  }
   const supplyEl = document.getElementById(`wSupply_${kindId}`);
   if (supplyEl) {
     const sup = computeSupplyBadge(w);
@@ -5426,6 +5628,9 @@ function renderWatchList() {
     const devColor = valuationBadge ? valuationBadge.color : 'var(--dim)';
     const depleteBadgeTxt = computeDepletionBadgeText(w);
     const supplyBadge = computeSupplyBadge(w);
+    const bandBadge = computeBandBadge(w);
+    const rb = rebuyInfo(w);
+    const avgHint = estimateAvgFromHistory(w.kind_id);
     const suggestedPct = computeSuggestedThresholdPct(w.kind_id);
     const suggestedTitle = suggestedPct !== null ? `변동성 기반 추천값: ${suggestedPct}%` : '추천값을 계산하려면 먼저 [조회]로 시세이력을 불러오세요';
     const confirmOptions = (selected) => [1, 2, 3].map(n => `<option value="${n}"${n === (selected || 1) ? ' selected' : ''}>${n}회</option>`).join('');
@@ -5435,8 +5640,16 @@ function renderWatchList() {
           <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${escHtml(w.name)}</span>
           <span class="w-price" id="wPrice_${w.kind_id}">${priceTxt}</span>
           <span class="w-signal-primary" id="wSignal_${w.kind_id}" onclick="toggleScoreBreakdown(${w.kind_id})" title="${escHtml(signalBadge ? signalBadge.tooltip : '')}&#10;&#10;(눌러서 점수 내역 보기)" style="cursor:pointer; color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
+          <span class="w-signal-primary" id="wBand_${w.kind_id}" title="${escHtml(bandBadge ? bandBadge.tooltip : '')}" style="color:${bandBadge ? bandBadge.color : 'var(--dim)'}; display:${bandBadge ? 'inline-block' : 'none'};">${bandBadge ? bandBadge.text : ''}</span>
           <span class="w-deplete" id="wDeplete_${w.kind_id}" style="display:${depleteBadgeTxt ? 'inline-block' : 'none'};">${depleteBadgeTxt || ''}</span>
           <span class="alert-hit" id="wFired_${w.kind_id}" style="display:${firedCount ? 'inline' : 'none'};">${firedCount ? `🔔 ${firedCount}` : ''}</span>
+        </div>
+        <div class="watch-item-extra" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
+          <span title="게임에서 보이는 평균 판매가를 입력하세요 — 12시간마다 갱신됩니다">평균가</span>
+          <input type="number" min="0" step="any" value="${w.avgPrice || ''}" placeholder="${avgHint ? '추정 ≈ ' + Math.round(avgHint).toLocaleString() : '게임에서 확인'}" style="width:96px; padding:3px 6px; font-size:11.5px;" onchange="setAvgPrice(${w.kind_id}, this.value)" title="${avgHint ? 'API 추정치는 최대 15% 틀립니다 — 게임 값을 입력하세요' : ''}">
+          <span id="wCeil_${w.kind_id}">${ceilingOf(w) ? `천장 <b style="color:var(--text);">${ceilingOf(w).toLocaleString()}</b>` : '천장 —'}</span>
+          <span id="wAvgAge_${w.kind_id}" style="color:${avgIsStale(w) && w.avgPrice ? 'var(--down)' : 'var(--dim)'};">${w.avgPriceAt ? (avgIsStale(w) ? '⏰ ' : '') + timeAgoText(w.avgPriceAt).replace(' 갱신', ' 입력') : ''}</span>
+          <span id="wRebuy_${w.kind_id}" style="color:${rb ? (rb.profit > 0 ? 'var(--up)' : 'var(--dim)') : 'var(--dim)'};">${rb ? `되사기 ${rb.profit > 0 ? '+' : ''}${Math.round(rb.profit).toLocaleString()}/개` : ''}</span>
         </div>
         <div id="wScoreBreak_${w.kind_id}" style="display:none; margin:0 10px 6px; padding:8px 10px; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; font-size:11.5px;"></div>
         <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
@@ -5465,6 +5678,12 @@ function renderWatchList() {
           ${w.highestPriceAlert ? `<input type="number" min="0" step="0.5" value="${w.highestPriceThresholdPct || 0}" title="최소 몇 % 이상 올라야 알림을 울릴지 (0=조금만 올라도)" onchange="setHighestPriceThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↑</span><button class="ghost" onclick="applySuggestedThreshold(${w.kind_id}, 'high')" title="${suggestedTitle}">✨추천</button><select title="연속 몇 번 확인되면 울릴지 (오탐 방지)" onchange="setHighestPriceConfirm(${w.kind_id}, this.value)">${confirmOptions(w.highestPriceConfirm)}</select>` : ''}
           <button class="ghost${w.listingDropAlert ? ' toggle-on dropwarn' : ''}" onclick="toggleListingDropAlert(${w.kind_id})" title="매물 수량이 급격히 줄면(품귀) 알림 — 팔 타이밍 신호">⚠ 품귀${w.listingDropAlert ? ' 감지중' : ''}</button>
           ${w.listingDropAlert ? `<input type="number" min="1" step="1" value="${w.listingDropThreshold || 1}" title="최소 몇 개 이상 줄어야 알림을 울릴지" onchange="setListingDropThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">개↓</span><input type="number" min="0" step="1" value="${w.listingDropPct || 0}" title="최소 몇 % 이상 줄어야 알림을 울릴지 (0=% 조건 안 씀). 개수 조건과 둘 다 만족해야 울려요 — 매물 500개짜리에서 5개 감소 같은 잔움직임을 걸러줍니다." onchange="setListingDropPct(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↓</span>` : ''}
+          <button class="ghost${w.sellHighAlert ? ' toggle-on sellhigh' : ''}" onclick="toggleSellHighAlert(${w.kind_id})" title="최저가가 천장의 N% 이상이면 알림 — 물량이 말랐으니 천장 근처에 걸어두면 팔려요">🔴 천장근접${w.sellHighAlert ? ' 감지중' : ''}</button>
+          ${w.sellHighAlert ? `<input type="number" min="50" max="100" step="1" value="${w.sellHighPct || 90}" title="천장의 몇 % 이상이면 팔 때로 볼지" onchange="setSellHighPct(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↑</span>` : ''}
+          <button class="ghost${w.buyLowAlert ? ' toggle-on buylow' : ''}" onclick="toggleBuyLowAlert(${w.kind_id})" title="최저가가 천장의 N% 이하면 알림 — 천장 대비 싸니 살 때예요">🟢 저가${w.buyLowAlert ? ' 감지중' : ''}</button>
+          ${w.buyLowAlert ? `<input type="number" min="10" max="90" step="1" value="${w.buyLowPct || 60}" title="천장의 몇 % 이하면 살 때로 볼지" onchange="setBuyLowPct(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↓</span>` : ''}
+          <button class="ghost${w.rebuyAlert ? ' toggle-on rebuy' : ''}" onclick="toggleRebuyAlert(${w.kind_id})" title="내가 판 가격의 85% 아래로 최저가가 내려오면 알림 — 되사도 남는 구간">🔁 되사기${w.rebuyAlert ? ' 감지중' : ''}</button>
+          ${w.rebuyAlert ? `<span class="hint" style="margin:0;">내 판매가</span><input type="number" min="0" step="any" value="${w.mySellPrice || ''}" placeholder="판 가격" style="width:80px;" title="내가 이 아이템을 판 가격 — 이 값의 85% 아래가 되사기 구간" onchange="setMySellPrice(${w.kind_id}, this.value)">` : ''}
           <button class="ghost${w.volAlert ? ' toggle-on volwarn' : ''}" onclick="toggleVolAlert(${w.kind_id})" title="이 아이템이 평소보다 크게 흔들릴 때 알림 — 방향(사기/팔기)은 말하지 않고 '지금 크게 움직인다'만 알려줍니다">🌊 변동성${w.volAlert ? ' 감지중' : ''}</button>
           ${w.volAlert ? `<input type="number" min="1.2" step="0.1" value="${w.volThresholdMult || 2}" title="평소 변동폭의 몇 배가 되면 알릴지 (2 = 평소의 두 배로 흔들릴 때). 아이템마다 평소 변동폭이 달라서 절대 %가 아니라 배수로 잽니다." onchange="setVolThresholdMult(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">배↑</span>` : ''}
         </div>

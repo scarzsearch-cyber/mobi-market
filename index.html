@@ -365,13 +365,13 @@
             </div>
             <div class="watch-alert-subform">
               <span class="hint" style="margin:0; min-width:100px;">토큰 없이 올리기</span>
-              <button class="ghost" onclick="copyServerSettings()">📋 설정 복사</button>
-              <button class="ghost" onclick="openSettingsOnGithub()">GitHub에서 붙여넣기 ↗</button>
+              <button class="ghost" onclick="openSettingsOnGithub()">📤 GitHub에 올리기 ↗</button>
+              <button class="ghost" onclick="copyServerSettings()">📋 복사만</button>
             </div>
             <div class="hint" style="margin:0 0 8px;">
-              토큰을 안 쓰실 거면 이 두 개면 끝이에요 — <b>[설정 복사]</b> 누르고, <b>[GitHub에서 붙여넣기]</b>로 열린
-              편집기에 붙여넣은 뒤 초록색 <b>Commit</b> 버튼을 누르시면 됩니다. 파일이 없으면 새로 만드는 화면이,
-              이미 있으면 수정 화면이 열려요.
+              토큰을 안 쓰실 거면 <b>[GitHub에 올리기]</b> 한 번이면 됩니다 — 편집기가 열리고, 내용이 이미
+              채워져 있으면 초록색 <b>Commit</b> 버튼만 누르세요. 비어 있으면 붙여넣기(Ctrl+V) 후 Commit 하시면 되고요
+              (누를 때 클립보드에도 항상 같이 담아둡니다).
             </div>
             <div class="watch-alert-subform">
               <input type="password" id="ghToken" placeholder="GitHub 토큰 (선택)" autocomplete="off" onchange="saveGhToken()">
@@ -860,19 +860,35 @@ function fallbackCopy(text, onOk) {
   else window.prompt('자동 복사가 막혀 있어요 — 아래 내용을 직접 복사해주세요 (Ctrl+A → Ctrl+C).', text);
 }
 
+// 클립보드에 넣고 GitHub 편집기를 같이 연다 — 한 번만 누르면 되게.
+// 새 파일 화면은 ?value= 로 내용을 미리 채울 수 있는데, 그게 실제로 먹는지는 로그인
+// 상태에서만 확인할 수 있어서 전제하지 않는다. 채워져 있으면 바로 Commit, 안 채워져
+// 있으면 붙여넣기 — 어느 쪽이든 막히지 않게 복사를 항상 같이 한다.
+const GH_URL_VALUE_MAX = 6000; // 너무 길면 URL 이 잘리므로 그때는 클립보드만 쓴다
+
 function openSettingsOnGithub() {
   const loc = repoFromLocation();
   if (!loc) { setHint('GitHub Pages 주소로 열었을 때만 쓸 수 있어요.', true); return; }
-  // 파일이 이미 있으면 edit, 없으면 new 화면이 맞다. 없는데 edit 로 가면 404 가 뜬다.
+  const text = serializeSettings(buildServerSettings());
+  copyServerSettings(); // 프리필이 안 먹는 경우를 위해 항상 복사해둔다
+
+  // 파일이 이미 있으면 edit, 없으면 new 가 맞다 (없는데 edit 로 가면 404).
+  // edit 화면은 프리필을 지원하지 않으므로 그 경우엔 붙여넣기로 안내한다.
   fetch('alerts/settings.json?cb=' + Date.now())
-    .then(res => {
-      const url = res.ok
-        ? `https://github.com/${loc.owner}/${loc.repo}/edit/main/alerts/settings.json`
-        : `https://github.com/${loc.owner}/${loc.repo}/new/main?filename=alerts/settings.json`;
+    .then(res => res.ok)
+    .catch(() => false)
+    .then(exists => {
+      let url;
+      if (exists) {
+        url = `https://github.com/${loc.owner}/${loc.repo}/edit/main/alerts/settings.json`;
+        setHint('복사했어요 — 열린 편집기에서 전체 선택(Ctrl+A) 후 붙여넣고 Commit 하세요.');
+      } else {
+        const enc = encodeURIComponent(text);
+        url = `https://github.com/${loc.owner}/${loc.repo}/new/main?filename=alerts/settings.json`
+            + (enc.length <= GH_URL_VALUE_MAX ? `&value=${enc}` : '');
+        setHint('복사했어요 — 내용이 이미 채워져 있으면 그대로 Commit, 비어 있으면 붙여넣고 Commit 하세요.');
+      }
       window.open(url, '_blank', 'noopener');
-    })
-    .catch(() => {
-      window.open(`https://github.com/${loc.owner}/${loc.repo}/new/main?filename=alerts/settings.json`, '_blank', 'noopener');
     });
 }
 

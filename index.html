@@ -359,6 +359,26 @@
             </div>
             <div class="hint" style="margin:0;">감시 목록·알림 설정·조용한 시간대 등을 파일로 저장해뒀다가, 브라우저를 바꾸거나 캐시가 날아갔을 때 불러올 수 있어요. (API 키·카카오 로그인 정보는 보안상 포함되지 않아요 — 새 기기에선 직접 입력해주세요.)</div>
             <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
+              <span style="min-width:120px;">🤖 서버 감시 동기화</span>
+              <span class="hint" id="settingsSyncStatus" style="margin:0;">확인 중…</span>
+              <button class="ghost" onclick="syncSettingsToRepo()">지금 올리기</button>
+            </div>
+            <div class="watch-alert-subform">
+              <input type="password" id="ghToken" placeholder="GitHub 토큰 (선택)" autocomplete="off" onchange="saveGhToken()">
+              <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('ghToken', this)" title="키 보이기/가리기">👁</button>
+            </div>
+            <div class="hint" style="margin:0;">
+              탭을 닫아도 오는 폰 알림은 저장소의 <code>alerts/settings.json</code>을 보고 돌아요. 이 칸에 토큰을 넣어두면
+              감시 목록·알림 조건을 바꿀 때마다 <b>화면이 알아서 그 파일을 갱신</b>해서, 손으로 내보내고 올릴 일이 없어집니다.
+              <br><br>
+              토큰은 <b>Fine-grained personal access token</b>으로 만들고 <b>이 저장소 하나만</b> 대상으로,
+              권한은 <b>Contents: Read and write</b> 하나만 주세요. 그렇게 하면 혹시 새더라도 이 게임 저장소 말고는
+              아무것도 못 건드립니다(계정 전체 권한이 아니에요). 만료일도 짧게 잡아두시고, 언제든 한 번에 폐기할 수 있어요.
+              <br>
+              토큰을 안 넣어도 됩니다 — 그 경우엔 서버 설정이 여기와 달라졌을 때 <b>알려주기만</b> 하고,
+              반영은 아래 [내보내기]로 받은 파일을 <code>alerts/settings.json</code>으로 올리시면 돼요.
+            </div>
+            <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
               <span style="min-width:120px;">🎨 이평선 스타일</span>
             </div>
             <div class="watch-alert-subform">
@@ -399,6 +419,10 @@
               <span class="hint" id="alertOutcomeSummary" style="margin:0;">아직 판정된 알림이 없어요.</span>
               <button class="ghost" onclick="clearAlertOutcomeLog()">기록 초기화</button>
               <button class="ghost" onclick="bulkApplySuggestedThresholds()" title="변동폭(%) 설정이 0(기본값)으로 남아있는 아이템에, 각자의 최근 변동성 기반 추천값을 한 번에 채워넣습니다. 야생·원념·파동처럼 좁은 범위에서 잔움직임에도 알림이 울리는 아이템들의 노이즈를 줄여 적중률을 올리는 데 도움이 됩니다.">📊 감시 목록에 추천 임계값 일괄 적용</button>
+            </div>
+            <div class="hint" style="margin:8px 0 4px;">공급 상태별 적중률</div>
+            <div id="alertOutcomeBySupply" style="border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12.5px; margin-bottom:10px;">
+              <div class="hint" style="margin:0;">알림이 쌓이면 여기에 나와요.</div>
             </div>
             <div id="alertOutcomePanel" style="max-height:260px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px;">
               <div class="hint" style="margin:0;">알림이 울리고 30분이 지나면 여기에 결과가 쌓여요.</div>
@@ -510,6 +534,7 @@ let lastItemName = null;
 let historyCacheByKind = {}; // { [kind_id]: { [days]: { histData, ts } } } — 아이템이 바뀌어도 유지됨(감시목록 탭 전환 시 재사용)
 let historyCacheOrder = []; // LRU 순서 추적용 — 오래 켜놓고 이것저것 검색하다 보면 무한정 쌓이는 걸 방지
 const HISTORY_CACHE_MAX_KINDS = 20;
+const HISTORY_CACHE_HARD_MAX = 60; // 감시 목록이 아무리 커도 이 이상은 들고 있지 않는다
 
 // historyCacheByKind에 새로 쓸 때마다 호출 — LRU 순서를 갱신하고, 너무 오래된 항목은 정리해서
 // 세션을 오래 켜놓고 여러 아이템을 검색해도 메모리가 무한정 늘어나지 않게 한다.
@@ -518,8 +543,12 @@ function touchHistoryCacheLRU(kindId) {
   if (idx !== -1) historyCacheOrder.splice(idx, 1);
   historyCacheOrder.push(kindId);
 
+  // 감시 목록이 상한보다 커지면 보호 규칙 때문에 아무것도 못 버리게 되어 상한이 무력해진다
+  // (21개를 감시하면 20개 상한이 사실상 없는 것과 같아져서 캐시가 계속 늘어난다).
+  // 그래서 실효 상한을 목록 크기에 맞춰 올리되, 절대 상한(HARD)을 따로 둬서 무한정 늘지 않게 한다.
+  const softMax = Math.max(HISTORY_CACHE_MAX_KINDS, watchList.length + 5);
   let attempts = 0;
-  while (historyCacheOrder.length > HISTORY_CACHE_MAX_KINDS && attempts < historyCacheOrder.length) {
+  while (historyCacheOrder.length > softMax && attempts < historyCacheOrder.length) {
     const evictId = historyCacheOrder.shift();
     attempts++;
     // 지금 보고 있거나 감시 목록에 있는 건 지우면 안 됨 (다시 넣어서 앞으로 안 밀리게)
@@ -528,6 +557,15 @@ function touchHistoryCacheLRU(kindId) {
       continue;
     }
     delete historyCacheByKind[evictId];
+  }
+  // 위 루프가 보호 대상만 남기고 끝났는데도 절대 상한을 넘으면, 지금 보고 있는 것만 빼고
+  // 가장 오래된 것부터 강제로 버린다. 캐시는 없으면 다시 받아오면 되는 값이라 안전하다.
+  while (historyCacheOrder.length > HISTORY_CACHE_HARD_MAX) {
+    const idx = historyCacheOrder.findIndex(id => id !== lastKindId);
+    if (idx === -1) break;
+    const [evictId] = historyCacheOrder.splice(idx, 1);
+    delete historyCacheByKind[evictId];
+    delete recentClosesCache[evictId]; // 파생 캐시도 같이 (안 그러면 여기만 계속 남는다)
   }
 }
 let baseResolution = null;   // API가 실제로 준 원본 해상도 ('10min' | 'hourly' | 'daily')
@@ -667,6 +705,161 @@ function saveWatchStateToStorage() {
     localStorage.setItem(LS_KEYS.alerts, JSON.stringify(alertsByKind));
     localStorage.setItem(LS_KEYS.focus, JSON.stringify(Array.from(focusKindIds)));
   } catch (e) {}
+  // 서버 감시가 보는 파일도 따라오게 한다. 설정 변경은 전부 이 함수를 거치므로
+  // (토글·임계값·알림 추가/삭제) 여기 한 곳만 걸면 빠지는 경로가 없다.
+  // 실제 업로드는 30초 디바운스라 연달아 만져도 커밋 하나로 끝난다.
+  scheduleSettingsSync('설정 변경');
+}
+
+// ---- 서버 감시 설정 자동 동기화 ----
+// alerts/watch.py 는 저장소의 alerts/settings.json 을 보고 감시한다. 그런데 그 파일을 사람이
+// 손으로 내보내서 커밋하는 구조면 반드시 어긋나고, 어긋나도 티가 안 난다 — 폰으로 알림이
+// 안 오는데 왜 안 오는지 모르는 상태가 최악이다. 애초에 "탭을 안 켜도 되게" 만든 기능인데
+// 새 수동 의무를 만들면 그건 자동화가 아니다.
+//
+// 그래서 화면이 GitHub API 로 그 파일을 직접 갱신한다. 토큰이 없으면 갱신은 못 하지만
+// 최소한 "서버가 보고 있는 설정과 여기가 다르다"는 것은 알려준다 — 같은 도메인의
+// alerts/settings.json 은 토큰 없이도 그냥 읽히기 때문이다.
+const SETTINGS_SYNC_DEBOUNCE_MS = 30000; // 설정을 연달아 만질 때 커밋이 쏟아지지 않게
+let settingsSyncTimer = null;
+let settingsSyncState = { status: 'idle', at: null, msg: '' };
+
+// scarzsearch-cyber.github.io/mobi-market/ → { owner: 'scarzsearch-cyber', repo: 'mobi-market' }
+function repoFromLocation() {
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/);
+  if (!m) return null; // 로컬에서 연 경우 — 동기화 대상이 없다
+  const seg = location.pathname.split('/').filter(Boolean)[0];
+  return seg ? { owner: m[1], repo: seg } : null;
+}
+
+function getGhToken() {
+  const el = document.getElementById('ghToken');
+  return el ? el.value.trim() : '';
+}
+
+function saveGhToken() {
+  try { localStorage.setItem(LS_KEYS.ghToken, getGhToken()); } catch (e) {}
+  renderSettingsSyncStatus();
+  if (getGhToken()) scheduleSettingsSync('토큰 등록');
+}
+
+// 서버 감시가 실제로 읽는 값만 담는다 — watch.py 가 안 보는 것을 넣으면 의미 없는 차이
+// 때문에 매번 다시 커밋하게 된다.
+function buildServerSettings() {
+  return {
+    version: 1,
+    watchList: watchList.map(slimWatchItem),
+    alertsByKind,
+    quiet: {
+      enabled: document.getElementById('quietEnabled').checked,
+      start: document.getElementById('quietStart').value,
+      end: document.getElementById('quietEnd').value,
+    },
+    kakaoItemCooldownMin: parseInt(document.getElementById('kakaoItemCooldownMinInput').value, 10) || 0,
+  };
+}
+
+// 항상 같은 방식으로 직렬화한다 — 키 순서만 다른 같은 내용으로 커밋이 나가면 안 되므로.
+function serializeSettings(o) { return JSON.stringify(o, null, 2); }
+
+// 페이지가 뜨는 동안 renderWatchList() -> saveWatchStateToStorage() 가 한 번 도는데,
+// 그때까지 이걸 켜두면 아무것도 안 바꿨는데도 페이지를 열 때마다 동기화가 예약된다.
+// 실제 커밋은 내용 비교로 막히지만 API 호출은 나가므로, 준비가 끝난 뒤부터만 반응하게 한다.
+let settingsSyncReady = false;
+
+function scheduleSettingsSync(reason) {
+  if (!settingsSyncReady) return;
+  if (!getGhToken()) return;
+  if (settingsSyncTimer) clearTimeout(settingsSyncTimer);
+  settingsSyncState = { status: 'pending', at: Date.now(), msg: reason || '' };
+  renderSettingsSyncStatus();
+  settingsSyncTimer = setTimeout(() => syncSettingsToRepo(), SETTINGS_SYNC_DEBOUNCE_MS);
+}
+
+async function syncSettingsToRepo() {
+  const token = getGhToken();
+  const loc = repoFromLocation();
+  if (!token || !loc) return;
+  const api = `https://api.github.com/repos/${loc.owner}/${loc.repo}/contents/alerts/settings.json`;
+  const auth = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' };
+  const body = serializeSettings(buildServerSettings());
+  try {
+    // 기존 파일의 sha 를 먼저 받는다 (없으면 새로 만드는 경우라 sha 없이 올린다).
+    let sha = null, remoteText = null;
+    const cur = await fetch(api + '?ref=main', { headers: auth });
+    if (cur.status === 200) {
+      const j = await cur.json();
+      sha = j.sha;
+      try { remoteText = decodeURIComponent(escape(atob((j.content || '').replace(/\n/g, '')))); } catch (e) { remoteText = null; }
+    } else if (cur.status === 401 || cur.status === 403) {
+      settingsSyncState = { status: 'error', at: Date.now(),
+        msg: `토큰이 거부됐어요 (HTTP ${cur.status}) — 권한이 Contents: Read and write 인지, 이 저장소가 대상에 들어 있는지 확인해주세요.` };
+      renderSettingsSyncStatus();
+      return;
+    }
+    if (remoteText !== null && remoteText === body) {
+      settingsSyncState = { status: 'synced', at: Date.now(), msg: '이미 같은 내용이에요.' };
+      renderSettingsSyncStatus();
+      return;
+    }
+    const put = await fetch(api, {
+      method: 'PUT',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `chore(alerts): 감시 설정 동기화 (${watchList.length}개)`,
+        content: btoa(unescape(encodeURIComponent(body))), // GitHub API 는 base64 를 요구한다
+        ...(sha ? { sha } : {}),
+        branch: 'main',
+      }),
+    });
+    settingsSyncState = put.ok
+      ? { status: 'synced', at: Date.now(), msg: '방금 올렸어요.' }
+      : { status: 'error', at: Date.now(), msg: `업로드 실패 (HTTP ${put.status})` };
+  } catch (e) {
+    settingsSyncState = { status: 'error', at: Date.now(), msg: '네트워크 오류 — 다음 변경 때 다시 시도해요.' };
+  }
+  renderSettingsSyncStatus();
+}
+
+// 토큰이 없어도 도는 확인 경로 — 같은 도메인의 파일이라 그냥 읽힌다.
+async function checkSettingsDrift() {
+  if (!document.getElementById('settingsSyncStatus')) return;
+  try {
+    const res = await fetch('alerts/settings.json?cb=' + Date.now());
+    if (!res.ok) {
+      settingsSyncState = { status: 'absent', at: Date.now(),
+        msg: '서버에 설정 파일이 아직 없어요 — 서버 감시가 아무것도 안 보고 있습니다.' };
+    } else {
+      const remote = await res.json();
+      const mine = watchList.map(w => w.name).sort();
+      const theirs = ((remote && remote.watchList) || []).map(w => w.name).sort();
+      settingsSyncState = JSON.stringify(mine) === JSON.stringify(theirs)
+        ? { status: 'synced', at: Date.now(), msg: `서버도 같은 ${theirs.length}개를 보고 있어요.` }
+        : { status: 'drift', at: Date.now(), msg: `서버는 ${theirs.length}개, 여기는 ${mine.length}개예요.` };
+      // 다르다는 걸 알고도 가만히 있으면 그건 경고지 자동화가 아니다 — 토큰이 있으면 바로 맞춘다.
+      if (settingsSyncState.status === 'drift' && getGhToken()) scheduleSettingsSync('서버와 달라서');
+    }
+  } catch (e) {
+    settingsSyncState = { status: 'error', at: Date.now(), msg: '서버 설정을 읽지 못했어요.' };
+  }
+  renderSettingsSyncStatus();
+}
+
+function renderSettingsSyncStatus() {
+  const el = document.getElementById('settingsSyncStatus');
+  if (!el) return;
+  const hasToken = !!getGhToken();
+  const S = settingsSyncState;
+  const color = { synced: 'var(--up)', drift: 'var(--down)', absent: 'var(--down)',
+                  error: 'var(--down)', pending: 'var(--accent)' }[S.status] || 'var(--dim)';
+  let text;
+  if (S.status === 'pending') text = `잠시 후 자동으로 올려요… (${S.msg})`;
+  else if (S.status === 'synced') text = `✅ 동기화됨 — ${S.msg}`;
+  else if (S.status === 'drift') text = (hasToken ? '⏳ 다름 — 곧 자동으로 맞춰요. ' : '⚠️ 서버 설정이 여기와 달라요. ') + S.msg;
+  else if (S.status === 'absent' || S.status === 'error') text = '⚠️ ' + S.msg;
+  else text = hasToken ? '변경이 생기면 자동으로 올려요.' : '토큰을 넣으면 자동으로 올라가요 (지금은 확인만 합니다).';
+  el.textContent = text;
+  el.style.color = color;
 }
 
 // 감시 목록·알림·환경설정을 파일로 내보낸다. API 키/카카오 로그인 정보는 민감정보라 일부러 뺀다 —
@@ -685,6 +878,9 @@ function exportSettings() {
       end: document.getElementById('quietEnd').value,
     },
     autoInterval: document.getElementById('autoIntervalSel').value,
+    // watch.py 가 읽는 값인데 내보내기에서 빠져 있었다 — 손으로 올리는 경로에서도
+    // 재알림 간격이 서버에 전달되게 한다.
+    kakaoItemCooldownMin: parseInt(document.getElementById('kakaoItemCooldownMinInput').value, 10) || 0,
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -864,6 +1060,11 @@ function loadStateFromStorage() {
       }
     }
   } catch (e) { console.error('[복원 실패] 공급 기록', e); }
+
+  try {
+    const savedTok = localStorage.getItem(LS_KEYS.ghToken);
+    if (savedTok) document.getElementById('ghToken').value = savedTok;
+  } catch (e) { console.error('[복원 실패] GitHub 토큰', e); }
 }
 
 // 표시용 봉 단위 정의: 원본 해상도별로 몇 개씩 묶어 보여줄지.
@@ -1025,6 +1226,9 @@ window.addEventListener('beforeunload', () => {
 // 감시 목록도 함께 최신화한다. API 키가 비어있으면 에러부터 띄우지 않고 안내만 한다.
 window.addEventListener('DOMContentLoaded', () => {
   if (watchList.length) refreshWatchList();
+  // 서버 감시가 지금 무엇을 보고 있는지 확인 — 토큰이 없어도 읽기는 되므로 항상 돈다.
+  settingsSyncReady = true;
+  checkSettingsDrift();
 
   // 카카오 알림 메시지의 "차트 보기" 버튼으로 들어온 경우(?open=kind_id) — 감시 목록에 있으면 바로 그 아이템으로 이동
   const openParam = new URLSearchParams(location.search).get('open');
@@ -2808,6 +3012,7 @@ function isQuietHours() {
 }
 
 function saveQuietHours() {
+  scheduleSettingsSync('조용한 시간대 변경');
   try {
     localStorage.setItem(LS_KEYS.quietEnabled, document.getElementById('quietEnabled').checked ? '1' : '');
     localStorage.setItem(LS_KEYS.quietStart, document.getElementById('quietStart').value);
@@ -2816,6 +3021,7 @@ function saveQuietHours() {
 }
 
 function saveKakaoItemCooldown() {
+  scheduleSettingsSync('재알림 간격 변경');
   const v = document.getElementById('kakaoItemCooldownMinInput').value;
   localStorage.setItem(LS_KEYS.kakaoItemCooldownMin, v);
 }
@@ -3181,9 +3387,16 @@ const SUPPLY_LOG_INTERVAL_MIN = 10;   // 아이템당 이 간격으로만 남긴
 const SUPPLY_LOG_MAX_PER_KIND = 1200; // 10분 간격 기준 약 8일치
 // (supplyLog / supplyLogDirty / supplyLogDisabled 는 파일 맨 위에서 선언한다 — TDZ 방지. 아래 주석 참고)
 
-function pushSupplyLog(kindId, price, count, ts) {
+// soldOut 이면 가격 자리에 0 을 넣는다 (0 은 유효한 가격이 될 수 없어 표식으로 안전하다).
+// ★ 품절을 빼면 안 되는 이유: 품절이야말로 공급 고갈의 극단이라, 「수량이 줄면 가격이
+// 오르는가」를 가장 강하게 지지하거나 반박할 순간이다. 그걸 빼고 재면 남은 표본이
+// 어느 쪽으로 치우쳤는지조차 알 수 없게 된다. 그래서 수량은 그대로 남기고 가격만 비운다.
+// 분석 쪽에서는 이 샘플을 「과거 수량」으로는 쓰되 가격 계산의 시작·끝점으로는 안 쓴다.
+function pushSupplyLog(kindId, price, count, ts, soldOut) {
   if (supplyLogDisabled) return;
-  if (price === null || price === undefined || count === null || count === undefined) return;
+  if (count === null || count === undefined) return;
+  if (soldOut) price = 0;
+  else if (price === null || price === undefined) return;
   const key = String(kindId);
   let entry = supplyLog[key];
   if (!entry) entry = supplyLog[key] = { t0: ts, s: [] };
@@ -3244,9 +3457,13 @@ function supplyLogTotalSamples() {
 const VERIFY_WINDOW_MIN = 60;      // 과거·미래 창 (분)
 const VERIFY_TOLERANCE_MIN = 20;   // 창 경계에서 이만큼까지 떨어진 샘플은 그 시점으로 인정
 
-function sampleNear(samples, targetTs, tolMs) {
+// filter 를 주면 그 조건을 만족하는 샘플 중에서만 고른다. 품절 샘플(price=0)은 가격
+// 변화의 시작·끝점이 될 수 없으므로, future 를 찾을 때 이걸로 걸러낸다 — 안 그러면 품절이
+// 딱 그 시점에 걸렸다는 이유만으로 멀쩡한 관측쌍이 통째로 버려진다.
+function sampleNear(samples, targetTs, tolMs, filter) {
   let best = null, bestGap = Infinity;
   for (const s of samples) {
+    if (filter && !filter(s)) continue;
     const gap = Math.abs(s.ts - targetTs);
     if (gap < bestGap) { bestGap = gap; best = s; }
   }
@@ -3281,10 +3498,11 @@ function analyzeSupplyEffect() {
     itemsUsed++;
     spanMs += samples[samples.length - 1].ts - samples[0].ts;
     for (const cur of samples) {
-      const past = sampleNear(samples, cur.ts - W, tol);
-      const future = sampleNear(samples, cur.ts + W, tol);
+      if (!cur.price) continue; // 품절 시점은 시작점이 될 수 없다 (수량 기준으로는 past 로 쓰인다)
+      const past = sampleNear(samples, cur.ts - W, tol);                      // 수량만 쓰므로 품절도 OK
+      const future = sampleNear(samples, cur.ts + W, tol, x => x.price > 0);  // 끝점은 가격이 있어야 한다
       if (!past || !future) continue;
-      if (!past.count || !cur.price) continue;
+      if (!past.count) continue;
       if (past === cur || future === cur) continue;
       const supplyPct = (cur.count - past.count) / past.count * 100;
       const pricePct = (future.price - cur.price) / cur.price * 100;
@@ -3427,9 +3645,14 @@ function saveAlertOutcomeLog() {
 
 function recordAlertFired(kindId, itemName, alertLabel, direction, price) {
   if (price === null || price === undefined) return; // 비교할 기준가가 없으면 판정 자체가 불가능
+  // 울린 시점의 공급 압력을 같이 남긴다 — 나중에 "품귀일 때 울린 알림이 더 잘 맞았나"를
+  // 셀 수 있다. 지금 안 남기면 그 질문은 영영 답할 수 없다(공급 압력은 그 순간의 값이라
+  // 나중에 소급해서 복원할 방법이 없다).
+  const w = watchList.find(x => x.kind_id === kindId);
+  const sp = w ? computeSupplyPressure(w) : null;
   pendingAlertEvals.push({
     id: Date.now() + Math.random(),
-    kindId, itemName, alertLabel, direction, priceAtFire: price,
+    kindId, itemName, alertLabel, direction, priceAtFire: price, supplyPressure: sp,
     firedAt: Date.now(), evalAt: Date.now() + ALERT_EVAL_WINDOW_MS,
   });
   savePendingAlertEvals();
@@ -3452,6 +3675,7 @@ function evaluatePendingAlertOutcomes() {
       alertOutcomeLog.unshift({
         ts: entry.firedAt, kindId: entry.kindId, itemName: entry.itemName, alertLabel: entry.alertLabel,
         direction: entry.direction, priceAtFire: entry.priceAtFire, priceAfter: w.price, success,
+        supplyPressure: entry.supplyPressure,
       });
       while (alertOutcomeLog.length > ALERT_OUTCOME_LOG_MAX) alertOutcomeLog.pop();
     }
@@ -3477,6 +3701,30 @@ function renderAlertOutcomeStats() {
     summaryEl.textContent = total
       ? `총 ${total}건 판정 · 적중 ${success}건 (${rate}%) · 대기 중 ${pendingAlertEvals.length}건`
       : `아직 판정된 알림이 없어요 (알림 발동 후 ${ALERT_EVAL_WINDOW_MS / 60000}분 뒤 자동 판정, 대기 중 ${pendingAlertEvals.length}건)`;
+  }
+  // 공급 상태별 적중률 — "품귀일 때 울린 알림이 실제로 더 잘 맞았나"에 답하는 자리.
+  // supplyPressure 가 없는 옛 기록은 세지 않는다(있는 것만으로 계산해야 비율이 안 왜곡된다).
+  const bySupply = document.getElementById('alertOutcomeBySupply');
+  if (bySupply) {
+    const groups = [
+      { label: '공급 마름 (압력 +0.2↑)', test: v => v >= 0.2 },
+      { label: '공급 안정 (±0.2)',       test: v => v > -0.2 && v < 0.2 },
+      { label: '매물 증가 (압력 −0.2↓)', test: v => v <= -0.2 },
+    ];
+    const withSp = alertOutcomeLog.filter(e => typeof e.supplyPressure === 'number');
+    if (!withSp.length) {
+      bySupply.innerHTML = '<div class="hint" style="margin:0;">공급 상태가 함께 기록된 판정이 아직 없어요 — 이번 업데이트 이후 울린 알림부터 쌓여요.</div>';
+    } else {
+      bySupply.innerHTML = groups.map(g => {
+        const hit = withSp.filter(e => g.test(e.supplyPressure));
+        const ok = hit.filter(e => e.success).length;
+        const pct = hit.length ? Math.round(ok / hit.length * 100) : null;
+        const color = pct === null ? 'var(--dim)' : (pct >= 60 ? 'var(--up)' : pct <= 40 ? 'var(--down)' : 'var(--text)');
+        return `<div class="analysis-row"><span class="a-label">${g.label}</span>
+          <span class="a-value" style="color:${color};">${pct === null ? '—' : pct + '%'}
+          <span style="color:var(--dim); font-weight:400;">(${ok}/${hit.length})</span></span></div>`;
+      }).join('') + `<div class="hint" style="margin:6px 0 0;">표본이 각각 20건은 넘어야 비교에 의미가 생겨요. 그 아래에선 우연입니다.</div>`;
+    }
   }
   if (panel) {
     if (!total) {
@@ -4351,8 +4599,8 @@ async function refreshWatchItem(w) {
     // 단기 추세 예측용 — 품절이 아닐 때만 가격 이력을 쌓는다 (품절=null 값이 껴들면 회귀선이 왜곡됨)
     if (!found.is_sold_out) pushPriceHistory(w.kind_id, w.price, w.lastUpdated);
 
-    // 가설 검증용 장기 기록 — 품절이면 가격이 없어서 쌍을 못 만드므로 건너뛴다.
-    if (!found.is_sold_out) pushSupplyLog(w.kind_id, w.price, found.total_count, w.lastUpdated);
+    // 가설 검증용 장기 기록 — 품절도 수량 0 으로 남긴다(그 순간이 가설의 핵심 증거다).
+    pushSupplyLog(w.kind_id, w.price, found.total_count, w.lastUpdated, found.is_sold_out);
 
     // 변동성 급등 알림 — 평소(7일 변동계수) 대비 지금이 몇 배로 흔들리는지.
     // 한 번 울리면 배수가 임계값 아래로 충분히 내려가야 재무장한다(경계선에서 계속 울리는 것 방지).
@@ -4649,8 +4897,17 @@ function computeSupplyPressure(w) {
   return sp;
 }
 
+// 점수가 어떻게 나왔는지 항목별로 돌려준다. computeSignalScore 와 같은 계산을 두 번
+// 적지 않도록, 실제 계산은 여기 한 곳에서만 하고 computeSignalScore 는 이걸 감싸기만 한다
+// (같은 숫자를 만드는 구현이 둘이 되면 한쪽만 고쳤을 때 화면과 설명이 어긋난다).
 function computeSignalScore(w) {
+  const b = computeSignalBreakdown(w);
+  return b ? b.score : null;
+}
+
+function computeSignalBreakdown(w) {
   let total = 0, used = false;
+  const parts = [];
 
   // 주 지표: 과거 시세 분포 내 백분위 극단성 (최대 ±85점 — 이것만으로도 문턱을 넘을 수 있음)
   const rank = computePricePercentileRank(w.kind_id, w.price);
@@ -4675,20 +4932,37 @@ function computeSignalScore(w) {
     // 공급 압력으로 세기를 조절한다 — 방향(부호)은 건드리지 않는다.
     // 압력이 신호와 같은 편이면 키우고(사기 신호 + 물량 마름 / 팔기 신호 + 매물 쏟아짐),
     // 반대편이면 줄인다. sign(extremity) 를 곱하는 것이 그 "같은 편인가"를 판정한다.
+    const rawExtremity = extremity;
     const sp = computeSupplyPressure(w);
+    let factor = 1;
     if (sp !== null && extremity !== 0) {
-      extremity *= 1 + SUPPLY_TILT * sp * Math.sign(extremity);
+      factor = 1 + SUPPLY_TILT * sp * Math.sign(extremity);
+      extremity *= factor;
     }
-    total += Math.max(-85, Math.min(85, extremity));
+    const capped = Math.max(-85, Math.min(85, extremity));
+    total += capped;
     used = true;
+    parts.push({ label: '가격 극단성', value: rawExtremity, note: `과거 7일 분포에서 백분위 ${rank.toFixed(0)}%` });
+    if (sp !== null) {
+      parts.push({
+        label: '공급 계수', factorOf: rawExtremity, factor,
+        value: extremity - rawExtremity,
+        note: `공급 압력 ${sp >= 0 ? '+' : ''}${sp.toFixed(2)} → ×${factor.toFixed(2)}`,
+      });
+    }
+    if (Math.abs(extremity) > 85.001) {
+      parts.push({ label: '상한 적용', value: capped - extremity, note: '한 항목이 ±85 를 넘지 않게 자름' });
+    }
   }
   // 보조 지표: 가격에 아직 안 잡힌 조짐을 살짝만 더해주는 용도. 주 지표(최대 ±85)가 압도적
   // 비중을 갖도록, 아래 항목들은 다 합쳐도 최대 ±12점을 넘지 않게 눌러뒀다 — "싸게 사서
   // 비싸게 판다"는 본래 목적에서 점수가 잡다한 요인들로 흐려지지 않게 하기 위함이다.
   // (매물 증감·소진 임박은 여기서 빠졌다 — 이제 위에서 곱셈으로 반영된다.)
   if (w.pct24h !== null && w.pct24h !== undefined) {
-    total += Math.max(-6, Math.min(6, -w.pct24h * 0.3)); // 24h 하락 중이면 양수 기여
+    const v = Math.max(-6, Math.min(6, -w.pct24h * 0.3)); // 24h 하락 중이면 양수 기여
+    total += v;
     used = true;
+    parts.push({ label: '24h 모멘텀', value: v, note: `24시간 ${w.pct24h >= 0 ? '+' : ''}${w.pct24h.toFixed(1)}%` });
   }
   // TEMA(빠른 선)가 맥락선(느린 선)을 "방금 막" 뚫고 올라가거나 내려간 경우에만 살짝 보탠다.
   // 이미 지나서 계속 위/아래에 머물러 있는 상태는 가격 극단성(주 지표)에 이미 반영돼 있을
@@ -4698,9 +4972,14 @@ function computeSignalScore(w) {
   if (crossSignal !== null) {
     total += crossSignal * 6; // crossSignal: +1(방금 상향 돌파, 사기 참고) / -1(방금 하향 돌파, 팔기 참고)
     used = true;
+    if (crossSignal !== 0) {
+      parts.push({ label: 'TEMA 교차', value: crossSignal * 6,
+                   note: crossSignal > 0 ? '방금 상향 돌파' : '방금 하향 돌파' });
+    }
   }
   if (!used) return null;
-  return Math.max(-100, Math.min(100, Math.round(total)));
+  const score = Math.max(-100, Math.min(100, Math.round(total)));
+  return { score, parts, rawTotal: total };
 }
 
 // TEMA(3)와 맥락 EMA(대략 전체 캐시 구간의 1/4 기간)를 캐시된 시세이력으로 계산해서,
@@ -4770,6 +5049,36 @@ function computeSignalBadge(w) {
       + '막대(●○○○○)는 점수의 세기를 5단계로 보여줘요.\n'
       + '±55 미만: 중립(빈 막대, 재구매 불가 구조상 움직이지 않는 게 안전) · ±55~81: 좋은 편(1~2칸) · ±82 이상: 지금 확실히 좋음(3~5칸)',
   };
+}
+
+// 점수 배지를 누르면 펼쳐지는 분해 패널. 점수가 곱셈이 섞이면서 숫자만 봐선 왜 그렇게
+// 나왔는지 알 수 없게 됐다 — 특히 "공급 때문에 얼마나 커졌나"가 안 보이면 SUPPLY_TILT 를
+// 감으로 조절하게 된다. 여기서 각 항목의 기여를 그대로 펼쳐 보인다.
+function toggleScoreBreakdown(kindId) {
+  const box = document.getElementById(`wScoreBreak_${kindId}`);
+  if (!box) return;
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  const w = watchList.find(x => x.kind_id === kindId);
+  const b = w ? computeSignalBreakdown(w) : null;
+  if (!b) {
+    box.innerHTML = '<span class="hint" style="margin:0;">아직 계산할 데이터가 없어요 — 이 아이템을 [조회]해서 시세이력을 불러와주세요.</span>';
+  } else {
+    const rows = b.parts.map(p => {
+      const isFactor = p.factor !== undefined;
+      const val = isFactor
+        ? `×${p.factor.toFixed(2)} (${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)})`
+        : `${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)}`;
+      const color = p.value > 0.05 ? 'var(--up)' : p.value < -0.05 ? 'var(--down)' : 'var(--dim)';
+      return `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
+        <span style="color:var(--dim);">${p.label} <span style="opacity:0.7;">${escHtml(p.note || '')}</span></span>
+        <span style="font-family:var(--mono); color:${color}; white-space:nowrap;">${val}</span></div>`;
+    }).join('');
+    box.innerHTML = rows + `<div style="display:flex; justify-content:space-between; gap:10px;
+      border-top:1px solid var(--line); margin-top:4px; padding-top:4px; font-weight:700;">
+      <span>합계</span><span style="font-family:var(--mono);">${b.score >= 0 ? '+' : ''}${b.score}</span></div>
+      <div class="hint" style="margin:4px 0 0;">공급 계수는 방향을 바꾸지 않고 세기만 조절해요 (최대 ±35%).</div>`;
+  }
+  box.style.display = 'block';
 }
 
 // 공급 상태 배지 — 신호 배지가 "지금 사/팔"을 말한다면 이건 "가격이 어느 쪽으로 밀리는 중인가"다.
@@ -5048,10 +5357,11 @@ function renderWatchList() {
         <div class="watch-item">
           <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${escHtml(w.name)}</span>
           <span class="w-price" id="wPrice_${w.kind_id}">${priceTxt}</span>
-          <span class="w-signal-primary" id="wSignal_${w.kind_id}" title="${escHtml(signalBadge ? signalBadge.tooltip : '')}" style="color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
+          <span class="w-signal-primary" id="wSignal_${w.kind_id}" onclick="toggleScoreBreakdown(${w.kind_id})" title="${escHtml(signalBadge ? signalBadge.tooltip : '')}&#10;&#10;(눌러서 점수 내역 보기)" style="cursor:pointer; color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
           <span class="w-deplete" id="wDeplete_${w.kind_id}" style="display:${depleteBadgeTxt ? 'inline-block' : 'none'};">${depleteBadgeTxt || ''}</span>
           <span class="alert-hit" id="wFired_${w.kind_id}" style="display:${firedCount ? 'inline' : 'none'};">${firedCount ? `🔔 ${firedCount}` : ''}</span>
         </div>
+        <div id="wScoreBreak_${w.kind_id}" style="display:none; margin:0 10px 6px; padding:8px 10px; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; font-size:11.5px;"></div>
         <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
           <span class="w-valuation" id="wDevPct_${w.kind_id}" title="평균은 참고용 흐름 지표일 뿐, 실제 판단 기준은 위쪽 신호 배지예요" style="color:${devColor};">${devTxt}</span>
           <span class="w-valuation" id="wSupply_${w.kind_id}" title="${escHtml(supplyBadge ? supplyBadge.tooltip : '')}" style="color:${supplyBadge ? supplyBadge.color : 'var(--dim)'}; display:${supplyBadge ? 'inline-block' : 'none'};">${supplyBadge ? supplyBadge.text : ''}</span>

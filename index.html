@@ -3706,9 +3706,10 @@ function clearSupplyLog() {
   setHint('기록을 초기화했습니다.');
 }
 
-// ---- 단기 추세 예측 (다음 N분 예상가) ----
-// 확정적인 예측이 아니라, "최근 짧은 추세를 그대로 연장하면 대략 이 정도"라는 참고치일 뿐이다.
-// 최근 가격 이력에 단순 선형회귀를 돌려 기울기를 구하고, 그 기울기를 N분만큼 밀어서 투영한다.
+// ---- 최근 가격 이력 (변동성 급등 알림용) ----
+// 예전엔 여기에 선형회귀로 "15분 뒤 예상가"를 만들었는데 지웠다 — 이 거래소는 3일 평균가를
+// 기준으로 설정 가능한 판매가 범위(상한·하한)가 정해지므로, 추세를 그대로 연장하면 실제로는
+// 도달할 수 없는 값이 나온다. 상한이 있는 시장에서 무제한 외삽은 틀린 숫자다.
 const PRICE_HISTORY_MAX = 8;
 function pushPriceHistory(kindId, price, ts) {
   const arr = priceHistoryByKind[kindId] || (priceHistoryByKind[kindId] = []);
@@ -3717,24 +3718,6 @@ function pushPriceHistory(kindId, price, ts) {
   return arr;
 }
 
-function computeProjectedPrice(kindId, minutesAhead) {
-  const arr = priceHistoryByKind[kindId];
-  if (!arr || arr.length < 3) return null;
-  const t0 = arr[0].ts;
-  const xs = arr.map(p => (p.ts - t0) / 60000); // 경과 시간(분)
-  const ys = arr.map(p => p.price);
-  const n = xs.length;
-  const sumX = xs.reduce((a, b) => a + b, 0), sumY = ys.reduce((a, b) => a + b, 0);
-  const sumXY = xs.reduce((a, x, i) => a + x * ys[i], 0);
-  const sumXX = xs.reduce((a, x) => a + x * x, 0);
-  const denom = (n * sumXX - sumX * sumX);
-  if (!denom) return null; // 모든 시점이 동일(짧은 구간 중복)이면 회귀선을 못 그림
-  const slope = (n * sumXY - sumX * sumY) / denom; // 가격 변화/분
-  const intercept = (sumY - slope * sumX) / n;
-  const lastX = xs[xs.length - 1];
-  const projected = intercept + slope * (lastX + minutesAhead);
-  return { projected: Math.max(0, projected), slopePerMin: slope };
-}
 
 // ---- 알림 적중률 되돌아보기 ----
 // 알림이 울린 시점의 가격을 "예측"으로 보고, 일정 시간(ALERT_EVAL_WINDOW_MS) 뒤 실제 가격과
@@ -4543,7 +4526,7 @@ function addTrailingAlert(kindId) {
 }
 
 // 추세전환 알림(추가 UI)은 제거됐다 — "꺾이는 순간"이 아니라 "꺾이고 나서 저점/고점에 도달한
-// 순간"을 원해서, 예상(15분)/범위/신호 배지로 충분하다고 판단해 UI만 뺐다. 다만 이 방식으로
+// 순간"을 원해서, 범위/신호 배지로 충분하다고 판단해 UI만 뺐다. 다만 이 방식으로
 // 이미 등록해둔 알림이 있는 사용자를 위해 checkPriceAlerts의 trend_reversal 처리 로직과
 // removePriceAlert/rearmPriceAlert 등의 하위호환 코드는 그대로 남겨둔다 — 새로 만드는 경로만
 // (addTrendReversalAlert 함수와 그 UI)없앴다.
@@ -5215,16 +5198,6 @@ function computeSupplyBadge(w) {
   };
 }
 
-// 단기 추세 예측(다음 15분 예상가) 배지 텍스트 — computeProjectedPrice가 데이터 부족으로
-// null을 반환하면(가격 이력이 3개 미만) 배지 자체를 숨긴다.
-function computeProjectedBadgeText(w) {
-  const info = computeProjectedPrice(w.kind_id, 15);
-  if (!info) return null;
-  return {
-    text: `예상(15분) ${Math.round(info.projected).toLocaleString()}`,
-    color: info.slopePerMin >= 0 ? 'var(--up)' : 'var(--down)',
-  };
-}
 
 // ---- 변동성 기반 동적 임계값 추천 ----
 // 아이템마다 평소 흔들리는 폭(표준편차 기반 변동계수)이 다르다 — 조용한 아이템은 1~2%
@@ -5368,7 +5341,6 @@ function patchWatchItemDisplay(kindId) {
   const signalEl = document.getElementById(`wSignal_${kindId}`);
   const devEl = document.getElementById(`wDevPct_${kindId}`);
   const depleteEl = document.getElementById(`wDeplete_${kindId}`);
-  const projEl = document.getElementById(`wProjected_${kindId}`);
   // != null 은 null 과 undefined 를 함께 거른다 — undefined 하나가 섞이면 아래
   // renderWatchList 의 map 이 통째로 던져서 감시 목록이 백지가 되기 때문이다.
   if (priceEl) priceEl.textContent = w.soldOut ? '품절' : (w.price != null ? w.price.toLocaleString() : '조회 중…');
@@ -5418,11 +5390,6 @@ function patchWatchItemDisplay(kindId) {
     supplyEl.style.display = sup ? 'inline-block' : 'none';
     if (sup) { supplyEl.style.color = sup.color; supplyEl.title = sup.tooltip; }
   }
-  if (projEl) {
-    const proj = computeProjectedBadgeText(w);
-    projEl.textContent = proj ? proj.text : '예상(15분) —';
-    projEl.style.color = proj ? proj.color : 'var(--dim)';
-  }
   // 이 아이템이 제작 계산기 재료로 실제로 쓰일 때만 재계산한다. 예전엔 무조건 불렀는데,
   // refreshWatchItem이 아이템당 이 함수를 최대 2번 부르므로 한 주기에 20번까지 헛돌았다.
   if (craftMaterialRows.some(r => r.kindId === kindId)) renderCraftCalc();
@@ -5459,7 +5426,6 @@ function renderWatchList() {
     const devColor = valuationBadge ? valuationBadge.color : 'var(--dim)';
     const depleteBadgeTxt = computeDepletionBadgeText(w);
     const supplyBadge = computeSupplyBadge(w);
-    const projBadge = computeProjectedBadgeText(w);
     const suggestedPct = computeSuggestedThresholdPct(w.kind_id);
     const suggestedTitle = suggestedPct !== null ? `변동성 기반 추천값: ${suggestedPct}%` : '추천값을 계산하려면 먼저 [조회]로 시세이력을 불러오세요';
     const confirmOptions = (selected) => [1, 2, 3].map(n => `<option value="${n}"${n === (selected || 1) ? ' selected' : ''}>${n}회</option>`).join('');
@@ -5476,7 +5442,6 @@ function renderWatchList() {
         <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
           <span class="w-valuation" id="wDevPct_${w.kind_id}" title="평균은 참고용 흐름 지표일 뿐, 실제 판단 기준은 위쪽 신호 배지예요" style="color:${devColor};">${devTxt}</span>
           <span class="w-valuation" id="wSupply_${w.kind_id}" title="${escHtml(supplyBadge ? supplyBadge.tooltip : '')}" style="color:${supplyBadge ? supplyBadge.color : 'var(--dim)'}; display:${supplyBadge ? 'inline-block' : 'none'};">${supplyBadge ? supplyBadge.text : ''}</span>
-          <span class="w-valuation" id="wProjected_${w.kind_id}" title="최근 짧은 추세를 단순 연장한 참고치일 뿐, 실제 가격을 보장하지 않아요" style="color:${projBadge ? projBadge.color : 'var(--dim)'};">${projBadge ? projBadge.text : '예상(15분) —'}</span>
           <span class="w-count" id="wCount_${w.kind_id}">${countTxt}</span>
           <span id="wRange1h_${w.kind_id}">${range1hTxt}</span>
           <span id="wRange24h_${w.kind_id}">${rangeTxt}</span>

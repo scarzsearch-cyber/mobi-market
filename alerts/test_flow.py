@@ -38,6 +38,8 @@ def fresh(tmp, price=1000, count=10):
                                           "min_price": price, "total_count": count,
                                           "is_sold_out": False}])
     m.kakao_access_token = lambda r, t: ("fake-access", None, None)
+    m.find_or_create_issue = lambda tok, repo: 42
+    m.github_issue_notify = lambda tok, repo, owner, num, text, link: (sent.append((text, link)) or (True, 201))
 
     def fake_send(access, text, link):
         sent.append((text, link))
@@ -207,9 +209,57 @@ try:
     check("종료코드 0", code, 0)
     check("설정을 읽었다고 보고", "설정을 읽었습니다" in out, True)
     check("아이템 이름이 로그에 나옴", "파동의 영혼석" in out, True)
-    check("시크릿 안내도 나옴", "시크릿이 아직" in out, True)
+    check("API 키 안내도 나옴", "MOBI_API_KEY 가 없어서" in out, True)
 finally:
     shutil.rmtree(tmp3, ignore_errors=True)
+
+
+# ── [13] 알림 통로 선택 — 카카오 없이 GitHub 이슈로 가는가 ──
+print("")
+print('[13] 카카오 시크릿 없이도 알림이 나가는가 (GitHub 이슈 통로)')
+tmp4 = tempfile.mkdtemp()
+try:
+    S = {"version": 1, "watchList": [{"name": "파동의 영혼석", "kind_id": 1,
+                                      "lowestPriceAlert": True, "lowestPriceThresholdPct": 3}],
+         "alertsByKind": {}, "quiet": {"enabled": False, "start": "23:00", "end": "08:00"},
+         "kakaoItemCooldownMin": 0}
+    with open(os.path.join(tmp4, "settings.json"), "w", encoding="utf-8") as f:
+        json.dump(S, f, ensure_ascii=False)
+
+    for k in ("KAKAO_REST_KEY", "KAKAO_REFRESH_TOKEN"):
+        os.environ.pop(k, None)
+    os.environ.update(MOBI_API_KEY="x", GITHUB_TOKEN="ghs_fake", GITHUB_REPOSITORY="owner/repo")
+
+    m, sent = fresh(tmp4, price=1000)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = m.main()
+    check("첫 실행 종료 0", code, 0)
+    check("통로가 이슈로 선택됨", "GitHub 이슈 댓글" in buf.getvalue(), True)
+
+    m, sent = fresh(tmp4, price=700)
+    m.main()
+    check("이슈 댓글로 전송 1건", len(sent), 1)
+
+    os.environ.pop("MOBI_API_KEY", None)
+    m, sent = fresh(tmp4)
+    check("API 키 없으면 종료 0", m.main(), 0)
+
+    os.environ.update(MOBI_API_KEY="x")
+    for k in ("GITHUB_TOKEN", "GITHUB_REPOSITORY"):
+        os.environ.pop(k, None)
+    m, sent = fresh(tmp4)
+    check("통로가 아예 없으면 실패 1", m.main(), 1)
+
+    os.environ.update(KAKAO_REST_KEY="y", KAKAO_REFRESH_TOKEN="z",
+                      GITHUB_TOKEN="ghs_fake", GITHUB_REPOSITORY="owner/repo")
+    m, sent = fresh(tmp4, price=1000)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        m.main()
+    check("카카오가 있으면 카카오 우선", "알림 통로: 카카오톡" in buf.getvalue(), True)
+finally:
+    shutil.rmtree(tmp4, ignore_errors=True)
 
 print("\n" + "─" * 50)
 print("❌ 실패 " + str(len(fails)) + "건: " + ", ".join(fails) if fails else "✅ 전부 통과")

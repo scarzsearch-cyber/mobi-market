@@ -56,6 +56,10 @@ jobs:
           MOBI_API_KEY: ${{ secrets.MOBI_API_KEY }}
           KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
           KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+          # 카카오가 미설정이면 이슈 댓글(=메일)로 알린다. 이 토큰은 워크플로가 자동으로
+          # 갖고 있어서 사람이 등록할 시크릿이 늘지 않는다.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           PAGE_URL: https://scarzsearch-cyber.github.io/mobi-market/
         run: python alerts/watch.py
 

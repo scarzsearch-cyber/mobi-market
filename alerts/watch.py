@@ -121,6 +121,55 @@ def kakao_send(access_token, text, link_url):
     return status == 200, status
 
 
+# ---------------------------------------------------------------- GitHub 이슈 알림 (카톡 없이)
+
+# 카카오는 개발자 앱을 만들고 로그인까지 해야 쓸 수 있고, refresh 토큰이 두 달마다
+# 만료돼서 사람이 다시 갈아줘야 한다. 그것 때문에 알림을 아예 못 받는 상태로 두느니,
+# 자격증명이 하나도 더 필요 없는 통로를 기본으로 둔다 — 저장소 이슈에 댓글을 달면
+# GitHub 이 메일을 보내주고, 그 메일이 폰으로 온다. GITHUB_TOKEN 은 워크플로가 이미
+# 갖고 있으므로 사람이 등록할 시크릿이 늘지 않는다.
+#
+# 이슈를 매번 새로 만들지 않고 하나를 재사용한다 — 알림마다 이슈가 쌓이면 목록이 못 쓰게 된다.
+ISSUE_TITLE = "🔔 가격 알림"
+ISSUE_MARKER = "<!-- mobi-market-alert-thread -->"
+
+
+def _gh(url, token, method="GET", payload=None):
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    return _request(url, method=method, data=data, headers={
+        "Authorization": "Bearer " + token,
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "mobi-market-watch",
+    })
+
+
+def find_or_create_issue(token, repo):
+    """알림을 모아둘 이슈 하나를 찾거나 만든다. 실패하면 None."""
+    status, body = _gh(f"https://api.github.com/repos/{repo}/issues?state=open&per_page=100", token)
+    if status == 200 and isinstance(body, list):
+        for it in body:
+            if ISSUE_MARKER in (it.get("body") or ""):
+                return it.get("number")
+    status, body = _gh(f"https://api.github.com/repos/{repo}/issues", token, "POST", {
+        "title": ISSUE_TITLE,
+        "body": ISSUE_MARKER + "\n\n가격 알림이 이 이슈에 댓글로 쌓입니다. "
+                "댓글이 달리면 GitHub 이 메일로 알려줍니다.\n"
+                "이 이슈를 닫으면 새 이슈가 만들어집니다 — 지우지 말고 그냥 두세요.",
+    })
+    if status in (200, 201) and isinstance(body, dict):
+        return body.get("number")
+    return None
+
+
+def github_issue_notify(token, repo, owner, number, text, link_url):
+    # 소유자를 멘션해야 알림 메일이 확실히 간다 (저장소 구독 설정과 무관하게).
+    comment = f"@{owner}\n\n{text}\n\n[차트 보기]({link_url})"
+    status, _ = _gh(f"https://api.github.com/repos/{repo}/issues/{number}/comments",
+                    token, "POST", {"body": comment})
+    return status in (200, 201), status
+
+
 # ---------------------------------------------------------------- 설정/상태
 
 def load_json(path, default):
@@ -281,13 +330,25 @@ def main():
         return 0
     log(f"설정을 읽었습니다 — 감시 대상 {len(watch_list)}개: " + ", ".join(w["name"] for w in watch_list[:10]))
 
-    missing = [n for n, v in (("MOBI_API_KEY", api_key),
-                              ("KAKAO_REST_KEY", rest_key),
-                              ("KAKAO_REFRESH_TOKEN", refresh_token)) if not v]
-    if missing:
-        log("⏭ 시크릿이 아직 등록되지 않아 여기서 멈춥니다: " + ", ".join(missing))
+    # 사람이 반드시 넣어야 하는 건 API 키 하나뿐이다 — 그게 없으면 시세를 못 읽으니 대안이 없다.
+    if not api_key:
+        log("⏭ MOBI_API_KEY 가 없어서 여기서 멈춥니다.")
         log("   저장소 Settings → Secrets and variables → Actions 에서 등록하면 바로 돌기 시작해요.")
         return 0  # 실패가 아니라 "아직 설정 전" — 빨간 X 를 상시로 만들지 않는다
+
+    # 알림 통로 결정: 카카오가 갖춰져 있으면 그쪽, 아니면 GitHub 이슈 댓글(=메일).
+    # 카카오는 앱 등록·로그인이 필요하고 토큰이 두 달마다 만료되므로 기본으로 요구하지 않는다.
+    use_kakao = bool(rest_key and refresh_token)
+    gh_token = os.environ.get("GITHUB_TOKEN", "").strip()
+    gh_repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    gh_owner = gh_repo.split("/")[0] if "/" in gh_repo else ""
+    if use_kakao:
+        log("알림 통로: 카카오톡")
+    elif gh_token and gh_repo:
+        log("알림 통로: GitHub 이슈 댓글 → 메일 (카카오는 미설정)")
+    else:
+        log("⚠ 알림 통로가 없습니다 — 카카오 시크릿도, GITHUB_TOKEN 도 없습니다.")
+        return 1
 
     alerts_by_kind = settings.get("alertsByKind") or {}
     quiet = settings.get("quiet")
@@ -343,7 +404,7 @@ def main():
         if msgs:
             pending.append((key, w["name"], msgs))
 
-    # ── 카톡 전송 (조용한 시간대엔 억제 — index.html 과 같은 규약) ──
+    # ── 알림 전송 (조용한 시간대엔 억제 — index.html 과 같은 규약) ──
     sent_state = state.get("lastSentAt") or {}
     sent_count = 0
     token_note = None
@@ -353,28 +414,43 @@ def main():
         for key, name, msgs in pending:
             last = sent_state.get(key) or 0
             if cooldown_min and (now - last) < cooldown_min * 60:
-                log(f"  · {name}: 쿨다운({cooldown_min}분) 중이라 카톡 생략")
+                log(f"  · {name}: 쿨다운({cooldown_min}분) 중이라 생략")
                 continue
             due.append((key, name, msgs))
 
         if due:
-            access, new_refresh, err = kakao_access_token(rest_key, refresh_token)
-            if err:
-                log("⚠ " + err)
-                return 1  # 알림 채널이 죽은 건 진짜 실패 — 메일이 오게 둔다
-            if new_refresh and new_refresh != refresh_token:
-                token_note = ("♻ 카카오가 새 refresh 토큰을 발급했습니다 — 시크릿 "
-                              "KAKAO_REFRESH_TOKEN 을 갱신하지 않으면 두 달 안에 알림이 멈춥니다.")
+            # 통로별로 한 번만 준비한다 (토큰 교환·이슈 조회를 아이템마다 반복하지 않게).
+            access = issue_no = None
+            if use_kakao:
+                access, new_refresh, err = kakao_access_token(rest_key, refresh_token)
+                if err:
+                    log("⚠ " + err)
+                    return 1  # 알림 채널이 죽은 건 진짜 실패 — 메일이 오게 둔다
+                if new_refresh and new_refresh != refresh_token:
+                    token_note = ("♻ 카카오가 새 refresh 토큰을 발급했습니다 — 시크릿 "
+                                  "KAKAO_REFRESH_TOKEN 을 갱신하지 않으면 두 달 안에 알림이 멈춥니다.")
+            else:
+                issue_no = find_or_create_issue(gh_token, gh_repo)
+                if not issue_no:
+                    log("⚠ 알림용 이슈를 만들지 못했습니다 — 저장소 Issues 기능이 꺼져 있는지 확인해주세요.")
+                    return 1
+
             for key, name, msgs in due:
-                ok, st = kakao_send(access, "\n".join(msgs), page_url + "?open=" + key)
+                text, link = "\n".join(msgs), page_url + "?open=" + key
+                if use_kakao:
+                    ok, st = kakao_send(access, text, link)
+                    where = "카톡"
+                else:
+                    ok, st = github_issue_notify(gh_token, gh_repo, gh_owner, issue_no, text, link)
+                    where = "이슈 댓글"
                 if ok:
                     sent_state[key] = now
                     sent_count += 1
-                    log(f"  ✓ {name}: 카톡 {len(msgs)}건 전송")
+                    log(f"  ✓ {name}: {where} {len(msgs)}건 전송")
                 else:
-                    log(f"  ⚠ {name}: 카톡 전송 실패 (HTTP {st})")
+                    log(f"  ⚠ {name}: {where} 전송 실패 (HTTP {st})")
     elif pending:
-        log(f"  · 조용한 시간대라 {len(pending)}개 아이템의 카톡을 억제했습니다(상태는 갱신).")
+        log(f"  · 조용한 시간대라 {len(pending)}개 아이템의 알림을 억제했습니다(상태는 갱신).")
 
     state["items"] = items_state
     state["lastSentAt"] = sent_state

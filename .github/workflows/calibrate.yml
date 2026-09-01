@@ -1,0 +1,22 @@
+name: 평균가 추정 보정 (수동)
+
+# 수동 실행 전용. 게임의 '평균 판매가'를 API 시세이력으로 재현할 수 있는지 검증한다.
+# 시크릿은 MOBI_API_KEY 만 쓰며, 값은 로그에 찍지 않는다 (가격·비율만 출력).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 추정법 대조
+        env:
+          MOBI_API_KEY: ${{ secrets.MOBI_API_KEY }}
+        run: python alerts/calibrate_avg.py

@@ -261,6 +261,7 @@ try:
 finally:
     shutil.rmtree(tmp4, ignore_errors=True)
 
+
 print("\n" + "─" * 50)
 print("❌ 실패 " + str(len(fails)) + "건: " + ", ".join(fails) if fails else "✅ 전부 통과")
 sys.exit(1 if fails else 0)

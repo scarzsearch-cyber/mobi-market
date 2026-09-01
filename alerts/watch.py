@@ -69,14 +69,59 @@ def _request(url, *, method="GET", headers=None, data=None, timeout=HTTP_TIMEOUT
         return None, {"_transport_error": type(e).__name__}
 
 
-def fetch_prices(api_key, name):
-    """이름으로 현재 매물 스냅샷을 받는다 (index.html 의 refreshWatchItem 과 같은 엔드포인트)."""
+# ---------------------------------------------------------------- API 키 로테이션
+
+# 키 하나당 분당 30회 한도가 걸린다. 감시 아이템이 늘면 한 주기에 그만큼 요청이 나가고,
+# 무엇보다 화면(index.html)이 같은 키를 쓰고 있으면 둘이 한 키의 한도를 나눠 쓰게 되어
+# 정작 사람이 보는 화면에서 429 가 뜬다. 그래서 여기도 키를 여러 개 받아 돌려 쓴다.
+#
+# MOBI_API_KEY 시크릿에 줄바꿈이나 쉼표로 여러 개를 넣으면 자동으로 다 쓴다.
+# ★ 화면에서 쓰는 키와는 다른 키를 주는 게 가장 깔끔하다 — 아예 경쟁하지 않는다.
+class KeyPool:
+    def __init__(self, raw):
+        import re
+        self.keys = [k.strip() for k in re.split(r"[\s,]+", raw or "") if k.strip()]
+        self.idx = 0
+        self.dead = set()  # 401 이 난 키 — 이번 실행 동안만 제외한다
+
+    def alive(self):
+        return [k for k in self.keys if k not in self.dead]
+
+    def take(self):
+        alive = self.alive()
+        if not alive:
+            return None
+        key = alive[self.idx % len(alive)]
+        self.idx += 1
+        return key
+
+
+def fetch_prices(pool, name):
+    """이름으로 현재 매물 스냅샷을 받는다 (index.html 의 refreshWatchItem 과 같은 엔드포인트).
+
+    429(한도)나 401(무효 키)이 나오면 다음 키로 넘어가 재시도한다. 키를 한 바퀴 다 돌아도
+    안 되면 그때 실패로 보고한다 — 키가 5개인데 한 개가 막혔다고 조회를 포기하면 안 된다.
+    """
     url = f"{BASE_URL}/market/prices?search={urllib.parse.quote(name)}&limit=20"
-    status, body = _request(url, headers={"Accept": "application/json",
-                                          "Authorization": "Bearer " + api_key})
-    if status != 200 or not isinstance(body, dict):
-        return status, None
-    return status, body.get("data") or []
+    attempts = max(1, len(pool.alive()))
+    last_status = None
+    for _ in range(attempts):
+        key = pool.take()
+        if key is None:
+            break
+        status, body = _request(url, headers={"Accept": "application/json",
+                                              "Authorization": "Bearer " + key})
+        last_status = status
+        if status == 401:
+            pool.dead.add(key)  # 무효 키는 이번 실행 내내 건너뛴다
+            continue
+        if status == 429:
+            time.sleep(1)       # 다음 키로 넘어가되 잠깐 숨을 돌린다
+            continue
+        if status != 200 or not isinstance(body, dict):
+            return status, None
+        return status, body.get("data") or []
+    return last_status, None
 
 
 # ---------------------------------------------------------------- 카카오
@@ -331,10 +376,12 @@ def main():
     log(f"설정을 읽었습니다 — 감시 대상 {len(watch_list)}개: " + ", ".join(w["name"] for w in watch_list[:10]))
 
     # 사람이 반드시 넣어야 하는 건 API 키 하나뿐이다 — 그게 없으면 시세를 못 읽으니 대안이 없다.
-    if not api_key:
+    pool = KeyPool(api_key)
+    if not pool.keys:
         log("⏭ MOBI_API_KEY 가 없어서 여기서 멈춥니다.")
         log("   저장소 Settings → Secrets and variables → Actions 에서 등록하면 바로 돌기 시작해요.")
         return 0  # 실패가 아니라 "아직 설정 전" — 빨간 X 를 상시로 만들지 않는다
+    log(f"API 키 {len(pool.keys)}개를 돌려 씁니다." if len(pool.keys) > 1 else "API 키 1개를 씁니다.")
 
     # 알림 통로 결정: 카카오가 갖춰져 있으면 그쪽, 아니면 GitHub 이슈 댓글(=메일).
     # 카카오는 앱 등록·로그인이 필요하고 토큰이 두 달마다 만료되므로 기본으로 요구하지 않는다.
@@ -372,7 +419,7 @@ def main():
     for i, w in enumerate(watch_list):
         if i:
             time.sleep(REQUEST_GAP_SEC)
-        status, data = fetch_prices(api_key, w["name"])
+        status, data = fetch_prices(pool, w["name"])
         if data is None:
             api_failures += 1
             log(f"  · {w['name']}: 조회 실패 (HTTP {status})")
@@ -461,6 +508,8 @@ def main():
     if token_note:
         log(token_note)
     # 전부 실패했으면 진짜 문제(키 만료 등) — 실패로 올려서 메일이 오게 한다
+    if pool.dead:
+        log(f"⚠ 무효(401)로 확인된 키 {len(pool.dead)}개를 이번 실행에서 제외했습니다 — 시크릿을 확인해주세요.")
     if api_failures and api_failures == len(watch_list):
         log("⚠ 모든 조회가 실패했습니다 — API 키가 만료됐거나 한도에 걸렸을 수 있습니다.")
         return 1

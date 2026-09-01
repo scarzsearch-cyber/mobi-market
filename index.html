@@ -364,6 +364,16 @@
               <button class="ghost" onclick="syncSettingsToRepo()">지금 올리기</button>
             </div>
             <div class="watch-alert-subform">
+              <span class="hint" style="margin:0; min-width:100px;">토큰 없이 올리기</span>
+              <button class="ghost" onclick="copyServerSettings()">📋 설정 복사</button>
+              <button class="ghost" onclick="openSettingsOnGithub()">GitHub에서 붙여넣기 ↗</button>
+            </div>
+            <div class="hint" style="margin:0 0 8px;">
+              토큰을 안 쓰실 거면 이 두 개면 끝이에요 — <b>[설정 복사]</b> 누르고, <b>[GitHub에서 붙여넣기]</b>로 열린
+              편집기에 붙여넣은 뒤 초록색 <b>Commit</b> 버튼을 누르시면 됩니다. 파일이 없으면 새로 만드는 화면이,
+              이미 있으면 수정 화면이 열려요.
+            </div>
+            <div class="watch-alert-subform">
               <input type="password" id="ghToken" placeholder="GitHub 토큰 (선택)" autocomplete="off" onchange="saveGhToken()">
               <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('ghToken', this)" title="키 보이기/가리기">👁</button>
             </div>
@@ -819,6 +829,51 @@ async function syncSettingsToRepo() {
     settingsSyncState = { status: 'error', at: Date.now(), msg: '네트워크 오류 — 다음 변경 때 다시 시도해요.' };
   }
   renderSettingsSyncStatus();
+}
+
+// ---- 토큰 없이 올리는 경로 ----
+// 토큰을 만들기 싫거나 만들 수 없는 경우를 위한 수동 경로. 그래도 "내보내기 → 파일 찾기 →
+// 업로드"보다는 훨씬 짧게 만든다: 클립보드에 넣고, GitHub 편집기를 그 파일 경로로 바로 연다.
+function copyServerSettings() {
+  const text = serializeSettings(buildServerSettings());
+  const done = () => setHint(`✅ 설정을 복사했습니다 (감시 ${watchList.length}개). 이제 [GitHub에서 붙여넣기]를 누르세요.`);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+// 클립보드 API 가 막힌 환경(비보안 컨텍스트 등)을 위한 옛 방식. 실패하면 최소한
+// 사용자가 직접 긁어갈 수 있도록 화면에 띄운다 — 조용히 실패하지 않게.
+function fallbackCopy(text, onOk) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  if (ok) onOk();
+  else window.prompt('자동 복사가 막혀 있어요 — 아래 내용을 직접 복사해주세요 (Ctrl+A → Ctrl+C).', text);
+}
+
+function openSettingsOnGithub() {
+  const loc = repoFromLocation();
+  if (!loc) { setHint('GitHub Pages 주소로 열었을 때만 쓸 수 있어요.', true); return; }
+  // 파일이 이미 있으면 edit, 없으면 new 화면이 맞다. 없는데 edit 로 가면 404 가 뜬다.
+  fetch('alerts/settings.json?cb=' + Date.now())
+    .then(res => {
+      const url = res.ok
+        ? `https://github.com/${loc.owner}/${loc.repo}/edit/main/alerts/settings.json`
+        : `https://github.com/${loc.owner}/${loc.repo}/new/main?filename=alerts/settings.json`;
+      window.open(url, '_blank', 'noopener');
+    })
+    .catch(() => {
+      window.open(`https://github.com/${loc.owner}/${loc.repo}/new/main?filename=alerts/settings.json`, '_blank', 'noopener');
+    });
 }
 
 // 토큰이 없어도 도는 확인 경로 — 같은 도메인의 파일이라 그냥 읽힌다.

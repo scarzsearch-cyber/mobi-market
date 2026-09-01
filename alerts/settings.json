@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "watchList": [
+    {
+      "name": "파동의 영혼석",
+      "lowestPriceAlert": true,
+      "lowestPriceThresholdPct": 3,
+      "lowestPriceConfirm": 2,
+      "highestPriceAlert": true,
+      "highestPriceThresholdPct": 3,
+      "highestPriceConfirm": 2,
+      "listingDropAlert": true,
+      "listingDropThreshold": 1,
+      "listingDropPct": 20,
+      "newListingAlert": false,
+      "newListingThreshold": 1
+    }
+  ],
+  "alertsByKind": {},
+  "quiet": {
+    "enabled": true,
+    "start": "23:00",
+    "end": "08:00"
+  },
+  "kakaoItemCooldownMin": 30
+}

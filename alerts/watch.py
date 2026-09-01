@@ -266,22 +266,28 @@ def main():
     refresh_token = os.environ.get("KAKAO_REFRESH_TOKEN", "").strip()
     page_url = os.environ.get("PAGE_URL", "https://scarzsearch-cyber.github.io/mobi-market/").strip()
 
+    # 설정을 먼저 읽는다 — 시크릿 등록 전이라도 "설정 파일이 제대로 읽히는지"를 워크플로
+    # 로그에서 확인할 수 있어야 한다. 순서가 반대면 시크릿을 넣기 전까지 설정이 맞는지
+    # 알 방법이 없고, 둘 다 처음 하는 사람은 뭐가 문제인지 못 가린다.
+    settings = load_json(SETTINGS_PATH, None)
+    if not settings or not isinstance(settings.get("watchList"), list):
+        log("⏭ alerts/settings.json 이 없거나 형식이 아닙니다 — 앱의 [GitHub에 올리기] 버튼으로 만들 수 있어요.")
+        return 0
+    # kind_id 는 없어도 된다 — 이름만 있으면 조회 결과에서 정확히 일치하는 것을 찾아 쓴다.
+    # 손으로 설정을 적을 때 내부 id 까지 알아야 하는 건 무리다.
+    watch_list = [w for w in settings["watchList"] if w.get("name")]
+    if not watch_list:
+        log("⏭ 감시 목록이 비어 있습니다.")
+        return 0
+    log(f"설정을 읽었습니다 — 감시 대상 {len(watch_list)}개: " + ", ".join(w["name"] for w in watch_list[:10]))
+
     missing = [n for n, v in (("MOBI_API_KEY", api_key),
                               ("KAKAO_REST_KEY", rest_key),
                               ("KAKAO_REFRESH_TOKEN", refresh_token)) if not v]
     if missing:
-        log("⏭ 시크릿이 아직 등록되지 않아 건너뜁니다: " + ", ".join(missing))
-        log("   저장소 Settings → Secrets and variables → Actions 에서 등록하세요.")
+        log("⏭ 시크릿이 아직 등록되지 않아 여기서 멈춥니다: " + ", ".join(missing))
+        log("   저장소 Settings → Secrets and variables → Actions 에서 등록하면 바로 돌기 시작해요.")
         return 0  # 실패가 아니라 "아직 설정 전" — 빨간 X 를 상시로 만들지 않는다
-
-    settings = load_json(SETTINGS_PATH, None)
-    if not settings or not isinstance(settings.get("watchList"), list):
-        log("⏭ alerts/settings.json 이 없거나 형식이 아닙니다 — 앱의 [설정/백업 → 내보내기] 파일을 그 이름으로 커밋하세요.")
-        return 0
-    watch_list = [w for w in settings["watchList"] if w.get("kind_id") and w.get("name")]
-    if not watch_list:
-        log("⏭ 감시 목록이 비어 있습니다.")
-        return 0
 
     alerts_by_kind = settings.get("alertsByKind") or {}
     quiet = settings.get("quiet")
@@ -305,16 +311,30 @@ def main():
     for i, w in enumerate(watch_list):
         if i:
             time.sleep(REQUEST_GAP_SEC)
-        kind_id = w["kind_id"]
         status, data = fetch_prices(api_key, w["name"])
         if data is None:
             api_failures += 1
             log(f"  · {w['name']}: 조회 실패 (HTTP {status})")
             continue
-        found = next((d for d in data if d.get("kind_id") == kind_id), None)
+
+        kind_id = w.get("kind_id")
+        if kind_id:
+            found = next((d for d in data if d.get("kind_id") == kind_id), None)
+        else:
+            # id 를 모르면 이름이 정확히 일치하는 것만 받아들인다. 여러 개가 걸리면
+            # 임의로 하나를 고르지 않고 건너뛴다 — 엉뚱한 아이템을 감시하느니 안 하는 게 낫다.
+            exact = [d for d in data if (d.get("name") or "") == w["name"]]
+            if len(exact) > 1:
+                log(f"  · {w['name']}: 같은 이름이 {len(exact)}개라 특정할 수 없어요 (kind_id 를 적어주세요)")
+                continue
+            found = exact[0] if exact else None
+            if found:
+                kind_id = found.get("kind_id")
         if not found:
             log(f"  · {w['name']}: 스냅샷에 없음")
             continue
+        if not w.get("kind_id"):
+            log(f"  · {w['name']}: 이름으로 찾음 (kind_id={kind_id})")
 
         key = str(kind_id)
         prev = items_state.get(key) or {}

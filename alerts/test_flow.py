@@ -142,6 +142,75 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
+
+# ── [11] kind_id 없이 이름만으로 해석되는가 (손으로 적은 settings.json 경로) ──
+print("\n[11] kind_id 없이 이름만 적어도 동작하는가")
+tmp2 = tempfile.mkdtemp()
+try:
+    S = {"version": 1,
+         "watchList": [{"name": "파동의 영혼석", "lowestPriceAlert": True, "lowestPriceThresholdPct": 3}],
+         "alertsByKind": {}, "quiet": {"enabled": False, "start": "23:00", "end": "08:00"},
+         "kakaoItemCooldownMin": 0}
+    with open(os.path.join(tmp2, "settings.json"), "w", encoding="utf-8") as f:
+        json.dump(S, f, ensure_ascii=False)
+    os.environ.update(MOBI_API_KEY="x", KAKAO_REST_KEY="y", KAKAO_REFRESH_TOKEN="z")
+
+    def load(price, names):
+        m, sent = fresh(tmp2, price=price)
+        m.fetch_prices = lambda k, n: (200, [{"kind_id": 100 + i, "name": nm, "min_price": price,
+                                              "total_count": 50, "is_sold_out": False}
+                                             for i, nm in enumerate(names)])
+        return m, sent
+
+    m, sent = load(1000, ["파동의 영혼석", "야생의 영혼석"])
+    check("이름 일치로 해석 → 종료 0", m.main(), 0)
+    st = json.load(open(os.path.join(tmp2, "state.json"), encoding="utf-8"))
+    check("해석된 kind_id 로 상태 저장", list(st["items"].keys()), ["100"])
+
+    m, sent = load(700, ["파동의 영혼석", "야생의 영혼석"])
+    check("두 번째 실행 -30% → 전송 1건", (m.main(), len(sent))[1], 1)
+
+    # 같은 이름이 둘이면 임의로 고르지 않는다
+    m, sent = load(1000, ["파동의 영혼석", "파동의 영혼석"])
+    m.main()
+    check("동명이인 → 전송 0건(건너뜀)", len(sent), 0)
+
+    # 이름이 아예 없으면 건너뛴다
+    m, sent = load(1000, ["엉뚱한 아이템"])
+    m.main()
+    check("이름 불일치 → 전송 0건", len(sent), 0)
+
+    # kind_id 를 적어두면 그쪽이 우선
+    S["watchList"][0]["kind_id"] = 101
+    with open(os.path.join(tmp2, "settings.json"), "w", encoding="utf-8") as f:
+        json.dump(S, f, ensure_ascii=False)
+    m, sent = load(1000, ["파동의 영혼석", "야생의 영혼석"])
+    m.main()
+    st = json.load(open(os.path.join(tmp2, "state.json"), encoding="utf-8"))
+    check("kind_id 명시 시 그것을 사용", "101" in st["items"], True)
+finally:
+    shutil.rmtree(tmp2, ignore_errors=True)
+
+# ── [12] 시크릿이 없어도 설정은 읽고 보고하는가 ──
+print("\n[12] 시크릿 전에도 설정 파일 검증이 되는가")
+tmp3 = tempfile.mkdtemp()
+try:
+    with open(os.path.join(tmp3, "settings.json"), "w", encoding="utf-8") as f:
+        json.dump({"version": 1, "watchList": [{"name": "파동의 영혼석"}]}, f, ensure_ascii=False)
+    for k in ("MOBI_API_KEY", "KAKAO_REST_KEY", "KAKAO_REFRESH_TOKEN"):
+        os.environ.pop(k, None)
+    m, _ = fresh(tmp3)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = m.main()
+    out = buf.getvalue()
+    check("종료코드 0", code, 0)
+    check("설정을 읽었다고 보고", "설정을 읽었습니다" in out, True)
+    check("아이템 이름이 로그에 나옴", "파동의 영혼석" in out, True)
+    check("시크릿 안내도 나옴", "시크릿이 아직" in out, True)
+finally:
+    shutil.rmtree(tmp3, ignore_errors=True)
+
 print("\n" + "─" * 50)
 print("❌ 실패 " + str(len(fails)) + "건: " + ", ".join(fails) if fails else "✅ 전부 통과")
 sys.exit(1 if fails else 0)

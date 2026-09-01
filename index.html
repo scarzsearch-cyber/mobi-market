@@ -100,6 +100,7 @@
   .watch-item button.toggle-on.lowprice, .watch-item-toggles button.toggle-on.lowprice{background:#38BDF8; color:#04202b; border-color:#38BDF8; font-weight:700;}
   .watch-item button.toggle-on.highprice, .watch-item-toggles button.toggle-on.highprice{background:var(--accent); color:#1a1208; border-color:var(--accent); font-weight:700;}
   .watch-item button.toggle-on.dropwarn, .watch-item-toggles button.toggle-on.dropwarn{background:var(--down); color:#2a0906; border-color:var(--down); font-weight:700;}
+  .watch-item button.toggle-on.volwarn, .watch-item-toggles button.toggle-on.volwarn{background:#a78bfa; color:#1e1533; border-color:#a78bfa; font-weight:700;}
   .watch-item-quickbtns button.detail-btn{border-color:var(--accent); color:var(--accent); font-weight:700;}
   .watch-item-quickbtns button.detail-btn.toggle-on{background:var(--accent); color:#1a1208;}
   .tools-tabbar{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:10px;}
@@ -612,6 +613,8 @@ function slimWatchItem(w) {
     highestPriceAlert: !!w.highestPriceAlert, highestPriceThresholdPct: w.highestPriceThresholdPct || 0,
     highestPriceConfirm: w.highestPriceConfirm,
     listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
+    listingDropPct: w.listingDropPct || 0,
+    volAlert: !!w.volAlert, volThresholdMult: w.volThresholdMult || 2,
   };
 }
 
@@ -626,6 +629,8 @@ function restoreWatchItem(w) {
     highestPriceAlert: !!w.highestPriceAlert, highestPriceThresholdPct: w.highestPriceThresholdPct || 0,
     highestPriceConfirm: w.highestPriceConfirm,
     listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
+    listingDropPct: w.listingDropPct || 0,
+    volAlert: !!w.volAlert, volThresholdMult: w.volThresholdMult || 2,
     depletionEtaMin: null,
   };
 }
@@ -3356,7 +3361,13 @@ function notifyHighestPriceAlert(w, prevPrice, newPrice, risePct) {
 // 수량이 빠르게 빠진다는 건 수요가 강하다는 뜻이라, 지금 등록하면 비싸게 팔릴 가능성이 높다.
 function notifyListingDrop(w, prevCount, newCount) {
   const priceTxt = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '-');
-  const msg = `${w.name} 매물 ${prevCount.toLocaleString()} → ${newCount.toLocaleString()}개 (현재 최저가 ${priceTxt}) — 품귀 진행 중, 팔기 좋은 타이밍일 수 있어요`;
+  const dropPct = prevCount ? ((prevCount - newCount) / prevCount * 100) : 0;
+  // 소진 속도를 같이 알려준다 — "몇 개 줄었다"보다 "이 속도면 언제 없어진다"가 행동에 직결된다.
+  const eta = w.depletionEtaMin;
+  const etaTxt = (eta !== null && eta !== undefined && eta <= 120)
+    ? ` · 이 속도면 ${eta < 1 ? '1분 내' : `약 ${Math.round(eta)}분 뒤`} 품절`
+    : '';
+  const msg = `${w.name} 매물 ${prevCount.toLocaleString()} → ${newCount.toLocaleString()}개 (-${dropPct.toFixed(0)}%${etaTxt}, 현재 최저가 ${priceTxt}) — 품귀 진행 중`;
   if (passesBrowserScoreFilter(w.kind_id)) {
     showBrowserNotification('⚠️ 품귀 진행 중', msg, w.kind_id);
     playAlertSound('listingDrop');
@@ -3364,6 +3375,21 @@ function notifyListingDrop(w, prevCount, newCount) {
   }
   queueKakaoAlert(w.kind_id, '⚠️ 품귀 진행 중', msg, w.name);
   if (!w.soldOut && w.price !== null) recordAlertFired(w.kind_id, w.name, '⚠ 품귀', 'sell', w.price);
+}
+
+// 변동성 급등 — 방향이 없는 알림이다. "지금 이 아이템이 평소보다 훨씬 크게 움직이고 있다"는
+// 사실만 알리고, 사라/팔라를 말하지 않는다. 사는 쪽이든 파는 쪽이든 기회와 위험이 같이
+// 커지는 구간이라, 화면을 열어 직접 보라는 뜻의 알림이다.
+function notifyVolatilitySpike(w, ratio) {
+  const priceTxt = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '-');
+  const msg = `${w.name} 변동성 평소의 ${ratio.toFixed(1)}배 (현재 최저가 ${priceTxt}) — 크게 흔들리는 중이니 직접 확인해보세요`;
+  if (passesBrowserScoreFilter(w.kind_id)) {
+    showBrowserNotification('🌊 변동성 급등', msg, w.kind_id);
+    playAlertSound('listingDrop');
+    flashTabTitle('🌊 변동성 급등!');
+  }
+  queueKakaoAlert(w.kind_id, '🌊 변동성 급등', msg, w.name);
+  // 적중률 로그에는 올리지 않는다 — 방향이 없는 알림이라 "맞았다/틀렸다"를 판정할 기준이 없다.
 }
 
 function flashTabTitle(label = '🔔 가격 알림!') {
@@ -3497,6 +3523,32 @@ function toggleListingDropAlert(kindId) {
 }
 
 // 품귀 알림 최소 감소 수량 설정 (신규 매물 알림과 대칭되는 개념)
+function setListingDropPct(kindId, val) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const n = parseFloat(val);
+  w.listingDropPct = (!n || n < 0) ? 0 : n; // 0 = % 조건 안 씀(개수만)
+  saveWatchStateToStorage();
+}
+
+function toggleVolAlert(kindId) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  w.volAlert = !w.volAlert;
+  w._volFired = false;
+  saveWatchStateToStorage();
+  renderWatchList();
+}
+
+function setVolThresholdMult(kindId, val) {
+  const w = watchList.find(x => x.kind_id === kindId);
+  if (!w) return;
+  const n = parseFloat(val);
+  w.volThresholdMult = (!n || n < 1.2) ? 2 : n; // 1.2배 미만은 사실상 상시 알림이라 막는다
+  w._volFired = false;
+  saveWatchStateToStorage();
+}
+
 function setListingDropThreshold(kindId, val) {
   const w = watchList.find(x => x.kind_id === kindId);
   if (!w) return;
@@ -3989,9 +4041,15 @@ async function refreshWatchItem(w) {
       notifyNewListing(w, prevCount, found.total_count);
     }
 
-    // 품귀(수량 급감) 알림 — 신규 매물 알림의 반대 방향. 설정한 최소 감소 수량 이상 줄었을 때만.
+    // 품귀(수량 급감) 알림 — 신규 매물 알림의 반대 방향.
+    // 개수 조건과 함께 "몇 % 줄었나"도 걸 수 있다(listingDropPct). 매물이 500개인 아이템에서
+    // 5개 감소는 아무것도 아니지만 20개인 아이템에선 큰 사건이라, 개수만으로는 아이템마다
+    // 임계값을 다시 잡아줘야 했다. 둘 다 설정하면 둘 다 만족해야 울린다(AND).
     const dropThreshold = w.listingDropThreshold || 1;
-    if (w.listingDropAlert && prevCount !== null && (prevCount - found.total_count) >= dropThreshold) {
+    const dropped = prevCount !== null ? (prevCount - found.total_count) : 0;
+    const droppedPct = (prevCount !== null && prevCount > 0) ? (dropped / prevCount * 100) : 0;
+    const pctOk = !(w.listingDropPct > 0) || droppedPct >= w.listingDropPct;
+    if (w.listingDropAlert && prevCount !== null && dropped >= dropThreshold && pctOk) {
       notifyListingDrop(w, prevCount, found.total_count);
     }
 
@@ -4034,6 +4092,21 @@ async function refreshWatchItem(w) {
 
     // 단기 추세 예측용 — 품절이 아닐 때만 가격 이력을 쌓는다 (품절=null 값이 껴들면 회귀선이 왜곡됨)
     if (!found.is_sold_out) pushPriceHistory(w.kind_id, w.price, w.lastUpdated);
+
+    // 변동성 급등 알림 — 평소(7일 변동계수) 대비 지금이 몇 배로 흔들리는지.
+    // 한 번 울리면 배수가 임계값 아래로 충분히 내려가야 재무장한다(경계선에서 계속 울리는 것 방지).
+    if (w.volAlert && !found.is_sold_out) {
+      const ratio = computeVolatilityRatio(w.kind_id);
+      if (ratio !== null) {
+        const mult = w.volThresholdMult || 2;
+        if (ratio >= mult && !w._volFired) {
+          w._volFired = true;
+          notifyVolatilitySpike(w, ratio);
+        } else if (w._volFired && ratio < mult * 0.8) {
+          w._volFired = false;
+        }
+      }
+    }
 
     patchWatchItemDisplay(w.kind_id); // 가격/수량/갱신시각만 가볍게 텍스트 교체 (알림 발동으로 배지가 바뀌는 경우는 checkPriceAlerts가 이미 전체 재렌더링을 처리함)
 
@@ -4277,6 +4350,44 @@ function computePricePercentileRank(kindId, price) {
 // 배지 표시부에서 함께 안내한다.
 const SELL_FEE_PCT = 15;
 
+// ---- 공급 압력 ----
+// 이 시장은 재판매가 안 되고 매물이 "등록"으로만 채워져서, 물량이 마르면 최저가가 위로
+// 밀려 올라간다. 그래서 공급은 "지금 싼가/비싼가"와는 다른 축의 정보다 — 가격이 앞으로
+// 어느 쪽으로 움직일지를 가리킨다.
+//
+// ★ 그래서 점수에 더하지 않고 곱한다(v2 변경). 예전엔 매물 증감을 ±6, 소진 임박을 −8 로
+// 그냥 더했는데, 그러면 "소진 임박 = 팔기 신호"라고 방향을 하나로 못박게 된다. 실제로는
+// 사는 쪽과 파는 쪽에 정반대로 작용한다:
+//   싸다 + 물량 마름  → 곧 오른다 → 사기 신호를 키운다
+//   싸다 + 물량 쏟아짐 → 더 내린다 → 사기 신호를 줄인다 (기다리는 게 낫다)
+//   비싸다 + 물량 쏟아짐 → 곧 내린다 → 팔기 신호를 키운다
+//   비싸다 + 물량 마름  → 더 오른다 → 팔기 신호를 줄인다 (쥐고 있는 게 낫다)
+// 즉 공급은 가격 신호의 방향을 바꾸지 않고 세기만 조절한다. 사기도 하고 팔기도 하는
+// 사용자에게 한 방향을 강요하지 않으면서도, 실질 영향력은 종전 ±14 보다 훨씬 크다.
+//
+// ⚠ 이 가중치는 아직 데이터로 검증된 값이 아니다. 수량 이력이 저장된 적이 없어서
+// ("수량이 줄면 가격이 오르는가"를 확인할 과거 데이터가 없다) 지금은 시장 구조에서 나온
+// 가설이다. supplyLog 가 쌓이면 적중률 탭에서 실제로 재볼 수 있다.
+const SUPPLY_TILT = 0.35;              // 최대 ±35% 증폭/감쇠
+const SUPPLY_FULL_PCT = 25;            // 24시간 수량이 이만큼 변하면 압력 최대치
+const SUPPLY_ETA_HORIZON_MIN = 30;     // 이 시간 안에 소진될 것 같으면 '마름' 쪽으로 밀어올린다
+
+// +1 = 물량이 마르는 중(품귀) · 0 = 안정 · -1 = 매물이 쏟아지는 중. 데이터 없으면 null.
+function computeSupplyPressure(w) {
+  let sp = null;
+  const cc = w.countChange24h;
+  if (cc !== null && cc !== undefined) {
+    sp = Math.max(-1, Math.min(1, -cc / SUPPLY_FULL_PCT)); // 수량이 줄면(음수) 압력은 양수
+  }
+  // 24시간 평균보다 "지금 당장 빠지는 속도"가 급하면 그쪽을 우선한다.
+  const eta = w.depletionEtaMin;
+  if (eta !== null && eta !== undefined && eta <= SUPPLY_ETA_HORIZON_MIN) {
+    const urgent = (SUPPLY_ETA_HORIZON_MIN - eta) / SUPPLY_ETA_HORIZON_MIN;
+    sp = (sp === null) ? urgent : Math.max(sp, urgent);
+  }
+  return sp;
+}
+
 function computeSignalScore(w) {
   let total = 0, used = false;
 
@@ -4300,22 +4411,22 @@ function computeSignalScore(w) {
       const netRank = computePricePercentileRank(w.kind_id, netProceeds);
       extremity = netRank === null ? 0 : -Math.max(0, (netRank - 50) * 2);
     }
+    // 공급 압력으로 세기를 조절한다 — 방향(부호)은 건드리지 않는다.
+    // 압력이 신호와 같은 편이면 키우고(사기 신호 + 물량 마름 / 팔기 신호 + 매물 쏟아짐),
+    // 반대편이면 줄인다. sign(extremity) 를 곱하는 것이 그 "같은 편인가"를 판정한다.
+    const sp = computeSupplyPressure(w);
+    if (sp !== null && extremity !== 0) {
+      extremity *= 1 + SUPPLY_TILT * sp * Math.sign(extremity);
+    }
     total += Math.max(-85, Math.min(85, extremity));
     used = true;
   }
   // 보조 지표: 가격에 아직 안 잡힌 조짐을 살짝만 더해주는 용도. 주 지표(최대 ±85)가 압도적
-  // 비중을 갖도록, 아래 항목들은 다 합쳐도 최대 ±26점을 넘지 않게 눌러뒀다 — "싸게 사서
+  // 비중을 갖도록, 아래 항목들은 다 합쳐도 최대 ±12점을 넘지 않게 눌러뒀다 — "싸게 사서
   // 비싸게 판다"는 본래 목적에서 점수가 잡다한 요인들로 흐려지지 않게 하기 위함이다.
+  // (매물 증감·소진 임박은 여기서 빠졌다 — 이제 위에서 곱셈으로 반영된다.)
   if (w.pct24h !== null && w.pct24h !== undefined) {
     total += Math.max(-6, Math.min(6, -w.pct24h * 0.3)); // 24h 하락 중이면 양수 기여
-    used = true;
-  }
-  if (w.countChange24h !== null && w.countChange24h !== undefined) {
-    total += Math.max(-6, Math.min(6, w.countChange24h * 0.12)); // 매물 증가는 양수 기여
-    used = true;
-  }
-  if (w.depletionEtaMin !== null && w.depletionEtaMin !== undefined && w.depletionEtaMin <= 10) {
-    total += -((10 - w.depletionEtaMin) / 10) * 8; // 소진이 임박할수록 음수(팔기 좋음) 방향
     used = true;
   }
   // TEMA(빠른 선)가 맥락선(느린 선)을 "방금 막" 뚫고 올라가거나 내려간 경우에만 살짝 보탠다.
@@ -4386,11 +4497,42 @@ function computeSignalBadge(w) {
     text: `${label} ${score >= 0 ? '+' : ''}${score} ${bar}`,
     color,
     tooltip: '평균은 그저 흐름 참고용(평균대비 배지에서 별도 표시)이고, 이 점수는 "과거 시세 분포에서 실제로 얼마나 싸거나 비싼 축인가"로 계산돼요.\n'
-      + '품귀 등 다른 조건이 없어도, 가격 자체가 역대급으로 싸거나(사기) 비싸면(팔기) 그것만으로 신호가 떠요.\n'
       + `사기·팔기 양쪽 다 수수료 ${SELL_FEE_PCT}%를 감안해서 재확인해요 — 살 때도 "나중에 팔 때 수수료 떼고도 여전히 싼 축"인지, 팔 때도 "수수료 떼고도 여전히 비싼 축"인지 봐요.\n`
-      + '수량 변화·모멘텀·소진임박도·TEMA-맥락선 교차는 가격에 아직 안 잡힌 조짐을 살짝 보태는 보조 지표(합쳐서 최대 ±26)일 뿐, 주 지표(가격 극단성, 최대 ±85)가 압도적 비중이에요.\n'
+      + '\n[공급이 세기를 조절해요]\n'
+      + '물량이 마르면 최저가가 위로 밀리고, 매물이 쏟아지면 내려가요. 그래서 공급은 방향을 바꾸지 않고 신호의 세기만 키우거나 줄여요 (최대 ±35%):\n'
+      + '· 싸다 + 물량 마름 → 곧 오르니 사기 신호를 키움\n'
+      + '· 싸다 + 매물 쏟아짐 → 더 내리니 사기 신호를 줄임 (기다리는 게 나음)\n'
+      + '· 비싸다 + 매물 쏟아짐 → 곧 내리니 팔기 신호를 키움\n'
+      + '· 비싸다 + 물량 마름 → 더 오르니 팔기 신호를 줄임 (쥐고 있는 게 나음)\n'
+      + '지금 공급이 어느 쪽인지는 옆의 "공급" 배지에서 볼 수 있어요.\n'
+      + '\n24시간 모멘텀과 TEMA-맥락선 교차는 살짝 보태는 보조 지표(합쳐서 최대 ±12)예요.\n'
       + '막대(●○○○○)는 점수의 세기를 5단계로 보여줘요.\n'
       + '±55 미만: 중립(빈 막대, 재구매 불가 구조상 움직이지 않는 게 안전) · ±55~81: 좋은 편(1~2칸) · ±82 이상: 지금 확실히 좋음(3~5칸)',
+  };
+}
+
+// 공급 상태 배지 — 신호 배지가 "지금 사/팔"을 말한다면 이건 "가격이 어느 쪽으로 밀리는 중인가"다.
+// 일부러 --up/--down(초록/빨강)을 쓰지 않는다. 그 두 색은 이 앱에서 사기/팔기 방향을 뜻하는데,
+// 공급은 방향이 아니라 세기를 조절하는 값이라 같은 색을 쓰면 정반대로 읽힐 수 있다.
+function computeSupplyBadge(w) {
+  const sp = computeSupplyPressure(w);
+  if (sp === null) return null;
+  let label, color;
+  if (sp >= 0.6)       { label = '물량 마름';   color = 'var(--accent)'; }
+  else if (sp >= 0.2)  { label = '물량 감소';   color = 'var(--accent)'; }
+  else if (sp <= -0.6) { label = '매물 쏟아짐'; color = '#38BDF8'; }
+  else if (sp <= -0.2) { label = '매물 증가';   color = '#38BDF8'; }
+  else                 { label = '공급 안정';   color = 'var(--dim)'; }
+  const pct = Math.round(Math.abs(sp) * SUPPLY_TILT * 100);
+  return {
+    sp,
+    text: `공급 ${label}`,
+    color,
+    tooltip: `24시간 수량 변화와 지금 빠지는 속도로 잰 공급 압력이에요 (${sp >= 0 ? '+' : ''}${sp.toFixed(2)}).\n`
+      + (Math.abs(sp) < 0.2
+          ? '지금은 한쪽으로 치우치지 않아서 신호 세기를 거의 안 건드려요.'
+          : `지금은 신호 세기를 약 ${pct}% ${sp > 0 ? '사기 쪽으로 키우고 팔기 쪽으로 줄여요' : '팔기 쪽으로 키우고 사기 쪽으로 줄여요'}.`)
+      + '\n방향(사기/팔기)을 바꾸지는 않아요 — 세기만 조절해요.',
   };
 }
 
@@ -4411,15 +4553,38 @@ function computeProjectedBadgeText(w) {
 // 그래서 고정된 숫자 대신 이 아이템의 최근 변동계수(cv)의 일부를 임계값으로 추천한다.
 // 신호 점수와 마찬가지로, 지난 시즌/지난 패치의 변동성은 지금과 무관하므로 최근
 // PERCENTILE_WINDOW_DAYS(7일) 창만 본다 — daysSel 선택값과 무관하게 고정.
-function computeSuggestedThresholdPct(kindId) {
-  const closes = getRecentClosesForKind(kindId);
-  if (!closes || closes.length < 3) return null;
-  const mean = closes.reduce((a, b) => a + b, 0) / closes.length;
+// 변동계수(표준편차 ÷ 평균, %) — 추천 임계값과 변동성 알림이 공통으로 쓴다.
+function coeffOfVariation(values) {
+  if (!values || values.length < 3) return null;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
   if (!mean) return null;
-  const variance = closes.reduce((a, b) => a + (b - mean) ** 2, 0) / closes.length;
-  const cv = Math.sqrt(variance) / mean * 100;
+  const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance) / mean * 100;
+}
+
+function computeSuggestedThresholdPct(kindId) {
+  const cv = coeffOfVariation(getRecentClosesForKind(kindId));
+  if (cv === null) return null;
   // 변동계수를 그대로 쓰면 너무 둔감해지므로 40%만 반영 — 최소 0.5%는 보장
   return Math.max(0.5, Math.round(cv * 0.4 * 10) / 10);
+}
+
+// ---- 변동성 급등 ----
+// "지금 유난히 출렁이는가"는 절대 %로는 못 잰다 — 원래 조용한 아이템의 3% 와 원래 출렁이는
+// 아이템의 3% 는 전혀 다른 사건이기 때문이다. 그래서 이 아이템 자신의 평소 변동계수(7일)를
+// 기준으로 "지금 몇 배로 흔들리는가"를 본다. 배수라서 아이템마다 임계값을 따로 안 잡아도 된다.
+// priceHistoryByKind 는 갱신될 때마다 쌓이는 최근 8개라 "지금"에 해당한다.
+const VOL_MIN_SAMPLES = 4;
+
+function computeVolatilityRatio(kindId) {
+  const arr = priceHistoryByKind[kindId];
+  if (!arr || arr.length < VOL_MIN_SAMPLES) return null;
+  const recentCv = coeffOfVariation(arr.map(p => p.price));
+  if (recentCv === null) return null;
+  const baseCv = coeffOfVariation(getRecentClosesForKind(kindId));
+  // 평소가 거의 0 이면 배수가 무한대로 튀므로 바닥을 깔아준다(0.3% = 사실상 정지 상태).
+  if (baseCv === null || baseCv < 0.3) return null;
+  return recentCv / baseCv;
 }
 
 // "⬇저가하락"/"⬆저가상승" 임계값 입력칸에 추천값을 채워 넣는다. dir: 'low' | 'high'
@@ -4565,6 +4730,13 @@ function patchWatchItemDisplay(kindId) {
     depleteEl.textContent = txt || '';
     depleteEl.style.display = txt ? 'inline-block' : 'none';
   }
+  const supplyEl = document.getElementById(`wSupply_${kindId}`);
+  if (supplyEl) {
+    const sup = computeSupplyBadge(w);
+    supplyEl.textContent = sup ? sup.text : '';
+    supplyEl.style.display = sup ? 'inline-block' : 'none';
+    if (sup) { supplyEl.style.color = sup.color; supplyEl.title = sup.tooltip; }
+  }
   if (projEl) {
     const proj = computeProjectedBadgeText(w);
     projEl.textContent = proj ? proj.text : '예상(15분) —';
@@ -4605,6 +4777,7 @@ function renderWatchList() {
     const devTxt = valuationBadge ? `평균대비 ${valuationBadge.text}` : '평균대비 —';
     const devColor = valuationBadge ? valuationBadge.color : 'var(--dim)';
     const depleteBadgeTxt = computeDepletionBadgeText(w);
+    const supplyBadge = computeSupplyBadge(w);
     const projBadge = computeProjectedBadgeText(w);
     const suggestedPct = computeSuggestedThresholdPct(w.kind_id);
     const suggestedTitle = suggestedPct !== null ? `변동성 기반 추천값: ${suggestedPct}%` : '추천값을 계산하려면 먼저 [조회]로 시세이력을 불러오세요';
@@ -4620,6 +4793,7 @@ function renderWatchList() {
         </div>
         <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
           <span class="w-valuation" id="wDevPct_${w.kind_id}" title="평균은 참고용 흐름 지표일 뿐, 실제 판단 기준은 위쪽 신호 배지예요" style="color:${devColor};">${devTxt}</span>
+          <span class="w-valuation" id="wSupply_${w.kind_id}" title="${escHtml(supplyBadge ? supplyBadge.tooltip : '')}" style="color:${supplyBadge ? supplyBadge.color : 'var(--dim)'}; display:${supplyBadge ? 'inline-block' : 'none'};">${supplyBadge ? supplyBadge.text : ''}</span>
           <span class="w-valuation" id="wProjected_${w.kind_id}" title="최근 짧은 추세를 단순 연장한 참고치일 뿐, 실제 가격을 보장하지 않아요" style="color:${projBadge ? projBadge.color : 'var(--dim)'};">${projBadge ? projBadge.text : '예상(15분) —'}</span>
           <span class="w-count" id="wCount_${w.kind_id}">${countTxt}</span>
           <span id="wRange1h_${w.kind_id}">${range1hTxt}</span>
@@ -4643,7 +4817,9 @@ function renderWatchList() {
           <button class="ghost${w.highestPriceAlert ? ' toggle-on highprice' : ''}" onclick="toggleHighestPriceAlert(${w.kind_id})" title="최저가가 오르면 알림 (팔 타이밍)">⬆ 저가상승${w.highestPriceAlert ? ' 감지중' : ''}</button>
           ${w.highestPriceAlert ? `<input type="number" min="0" step="0.5" value="${w.highestPriceThresholdPct || 0}" title="최소 몇 % 이상 올라야 알림을 울릴지 (0=조금만 올라도)" onchange="setHighestPriceThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↑</span><button class="ghost" onclick="applySuggestedThreshold(${w.kind_id}, 'high')" title="${suggestedTitle}">✨추천</button><select title="연속 몇 번 확인되면 울릴지 (오탐 방지)" onchange="setHighestPriceConfirm(${w.kind_id}, this.value)">${confirmOptions(w.highestPriceConfirm)}</select>` : ''}
           <button class="ghost${w.listingDropAlert ? ' toggle-on dropwarn' : ''}" onclick="toggleListingDropAlert(${w.kind_id})" title="매물 수량이 급격히 줄면(품귀) 알림 — 팔 타이밍 신호">⚠ 품귀${w.listingDropAlert ? ' 감지중' : ''}</button>
-          ${w.listingDropAlert ? `<input type="number" min="1" step="1" value="${w.listingDropThreshold || 1}" title="최소 몇 개 이상 줄어야 알림을 울릴지" onchange="setListingDropThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">개↓</span>` : ''}
+          ${w.listingDropAlert ? `<input type="number" min="1" step="1" value="${w.listingDropThreshold || 1}" title="최소 몇 개 이상 줄어야 알림을 울릴지" onchange="setListingDropThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">개↓</span><input type="number" min="0" step="1" value="${w.listingDropPct || 0}" title="최소 몇 % 이상 줄어야 알림을 울릴지 (0=% 조건 안 씀). 개수 조건과 둘 다 만족해야 울려요 — 매물 500개짜리에서 5개 감소 같은 잔움직임을 걸러줍니다." onchange="setListingDropPct(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↓</span>` : ''}
+          <button class="ghost${w.volAlert ? ' toggle-on volwarn' : ''}" onclick="toggleVolAlert(${w.kind_id})" title="이 아이템이 평소보다 크게 흔들릴 때 알림 — 방향(사기/팔기)은 말하지 않고 '지금 크게 움직인다'만 알려줍니다">🌊 변동성${w.volAlert ? ' 감지중' : ''}</button>
+          ${w.volAlert ? `<input type="number" min="1.2" step="0.1" value="${w.volThresholdMult || 2}" title="평소 변동폭의 몇 배가 되면 알릴지 (2 = 평소의 두 배로 흔들릴 때). 아이템마다 평소 변동폭이 달라서 절대 %가 아니라 배수로 잽니다." onchange="setVolThresholdMult(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">배↑</span>` : ''}
         </div>
         ${renderAlertPanelHtml(w.kind_id)}` : ''}
       </div>`;

@@ -2970,9 +2970,22 @@ function initKakao() {
     // Kakao SDK는 로그인 성공 시 토큰을 쿠키에 저장해두고, init()할 때 자동으로 다시 불러온다.
     // 그래서 새로고침해도 예전에 로그인했었다면 여기서 이미 토큰이 잡혀있을 수 있다.
     const existingToken = ok && Kakao.Auth.getAccessToken && Kakao.Auth.getAccessToken();
-    if (existingToken) {
+    // ★ SDK 쿠키(existingToken)는 몇 시간이면 사라진다 — 탭을 새로고침하거나 하루만
+    // 지나도 없어지는 게 정상이다. 그런데 kakaoLoggedIn 이 이것만 보고 있어서, 쿠키가
+    // 없으면 refresh 토큰이 localStorage 에 멀쩡히 있어도 "로그인해주세요"로 뜨고,
+    // sendKakaoMemo() 는 kakaoLoggedIn 이 false 면 refresh 토큰을 시도해보지도 않고
+    // 조용히 리턴한다(로그도 안 남는다) — 그래서 화면은 브라우저 알림이 죽은 것처럼
+    // 보이지만 실제로는 "보내기 직전에 말없이 멈추는" 상태였다.
+    // refresh 토큰이 유효기간(보통 2개월) 안이면 로그인된 것으로 본다 — 실제 발송
+    // 시점엔 refreshKakaoTokenIfNeeded() 가 이 토큰으로 새 access token 을 받아온다.
+    const refreshToken = ok && localStorage.getItem(LS_KEYS.kakaoRefreshToken);
+    const refreshExpiresAt = Number(localStorage.getItem(LS_KEYS.kakaoRefreshExpiresAt) || 0);
+    const refreshStillValid = refreshToken && Date.now() < refreshExpiresAt;
+    if (existingToken || refreshStillValid) {
       kakaoLoggedIn = true;
-      updateKakaoStatus('✅ 로그인됨 — 알림이 카카오톡으로도 전송됩니다');
+      updateKakaoStatus(existingToken
+        ? '✅ 로그인됨 — 알림이 카카오톡으로도 전송됩니다'
+        : '✅ 로그인 유지됨 — 알림이 카카오톡으로도 전송됩니다 (필요할 때 자동 갱신)');
       document.getElementById('kakaoTestBtn').disabled = false;
     } else {
       updateKakaoStatus(ok ? '✅ 키 저장됨 — 로그인해주세요' : '⚠️ 초기화 실패, 키를 확인해주세요');

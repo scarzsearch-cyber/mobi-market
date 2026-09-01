@@ -4944,10 +4944,14 @@ function computeSignalBreakdown(w) {
     used = true;
     parts.push({ label: '가격 극단성', value: rawExtremity, note: `과거 7일 분포에서 백분위 ${rank.toFixed(0)}%` });
     if (sp !== null) {
+      // 가격 신호가 0 이면 곱해도 0 이라 계수가 안 걸린다. 그때 "×1.00" 만 보여주면
+      // 공급 압력이 없는 것처럼 읽히므로, 압력은 있는데 적용될 대상이 없다고 밝힌다.
       parts.push({
         label: '공급 계수', factorOf: rawExtremity, factor,
         value: extremity - rawExtremity,
-        note: `공급 압력 ${sp >= 0 ? '+' : ''}${sp.toFixed(2)} → ×${factor.toFixed(2)}`,
+        note: rawExtremity === 0
+          ? `공급 압력 ${sp >= 0 ? '+' : ''}${sp.toFixed(2)} — 가격 신호가 0이라 곱할 대상이 없어요`
+          : `공급 압력 ${sp >= 0 ? '+' : ''}${sp.toFixed(2)} → ×${factor.toFixed(2)}`,
       });
     }
     if (Math.abs(extremity) > 85.001) {

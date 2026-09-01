@@ -1,0 +1,79 @@
+name: 가격 알림 감시
+
+# ★ 트리거는 이 둘만 쓴다.
+#   pull_request_target / issue_comment / workflow_run 은 남이 준 입력으로 코드가 돌면서
+#   시크릿에 접근할 수 있는 트리거라, 공개 저장소에서 시크릿을 쓸 땐 절대 쓰지 않는다.
+#   schedule + workflow_dispatch 조합엔 그 공격 경로가 없다.
+on:
+  schedule:
+    # GitHub 예약 실행의 최소 간격은 5분이고, 실제로는 부하에 따라 밀리거나 통째로
+    # 건너뛸 수 있다. 10분으로 두면 한 번 밀려도 다음 슬롯이 20분 안에 온다.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+# 상태를 alerts-state 브랜치에 밀어넣어야 하므로 쓰기 권한.
+# 저장소 기본값에 기대지 않고 여기서 명시한다.
+permissions:
+  contents: write
+
+# 앞 실행이 아직 돌고 있으면 새로 시작하지 않는다 — 같은 상태를 두 실행이 동시에 쓰면
+# 알림이 중복되거나 상태가 뒤엉킨다. 취소하지 않고 기다리게 두는 쪽(cancel-in-progress
+# 없음)이 맞다: 취소하면 이미 보낸 카톡의 상태가 저장되지 않아 다음 실행이 또 보낸다.
+concurrency:
+  group: mobi-alerts
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      # 제3자 액션은 쓰지 않는다 — 그 액션이 털리면 시크릿을 넘겨받은 채로 돌기 때문.
+      # 공식 actions/* 만 사용한다.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ── 상태는 main 이 아니라 전용 브랜치에 둔다 ──
+      # 10분마다 도는 작업이라 main 에 커밋하면 하루 144개가 쌓이고, 이 저장소의 Pages 는
+      # 브랜치 배포라 그때마다 사이트가 재빌드된다. alerts-state 브랜치는 항상 커밋 1개로
+      # 강제 덮어쓰기 하므로 main 이력은 깨끗하고 저장소도 안 커진다.
+      - name: 지난 상태 불러오기
+        run: |
+          if git fetch --depth 1 origin alerts-state 2>/dev/null; then
+            git show FETCH_HEAD:state.json > alerts/state.json
+            echo "지난 상태를 불러왔습니다."
+          else
+            echo '{}' > alerts/state.json
+            echo "상태 브랜치가 아직 없습니다 — 이번이 첫 실행입니다."
+          fi
+
+      - name: 감시 실행
+        env:
+          MOBI_API_KEY: ${{ secrets.MOBI_API_KEY }}
+          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+          PAGE_URL: https://scarzsearch-cyber.github.io/mobi-market/
+        run: python alerts/watch.py
+
+      # 감시가 실패했더라도 이미 보낸 알림의 상태는 반드시 남겨야 중복 전송이 안 난다.
+      - name: 상태 저장
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test -f alerts/state.json || { echo "상태 파일 없음 — 저장 생략"; exit 0; }
+          work=$(mktemp -d)
+          cp alerts/state.json "$work/state.json"
+          cd "$work"
+          git init -q
+          git checkout -q -b alerts-state
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -q -m "감시 상태 $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push -q --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            alerts-state
+          echo "상태를 alerts-state 브랜치에 저장했습니다."

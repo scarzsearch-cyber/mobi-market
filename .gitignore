@@ -1,0 +1,5 @@
+# 상태 파일은 alerts-state 브랜치에만 둔다 — main 에 커밋되면
+# 10분마다 이력이 쌓이고 Pages 가 매번 재빌드된다.
+alerts/state.json
+__pycache__/
+*.pyc

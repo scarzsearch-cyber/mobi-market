@@ -48,6 +48,8 @@ jobs:
             echo '{}' > alerts/state.json
             echo "상태 브랜치가 아직 없습니다 — 이번이 첫 실행입니다."
           fi
+          # 저장 단계에서 "정말 바뀌었는지" 비교할 사본 (안 바뀌었으면 푸시를 건너뛴다)
+          cp alerts/state.json alerts/.state_prev
 
       - name: 감시 실행
         env:
@@ -64,6 +66,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           test -f alerts/state.json || { echo "상태 파일 없음 — 저장 생략"; exit 0; }
+          # 시크릿 등록 전이거나 아무 변화도 없었으면 같은 내용을 10분마다 강제 푸시하게 된다.
+          # 실제로 바뀐 게 있을 때만 쓴다.
+          if [ -f alerts/.state_prev ] && cmp -s alerts/.state_prev alerts/state.json; then
+            echo "상태 변화 없음 — 저장 생략"
+            exit 0
+          fi
           work=$(mktemp -d)
           cp alerts/state.json "$work/state.json"
           cd "$work"

@@ -3,3 +3,4 @@
 alerts/state.json
 __pycache__/
 *.pyc
+alerts/.state_prev

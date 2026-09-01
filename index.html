@@ -921,9 +921,9 @@ function renderItemSuggestions(list, query) {
     const name = it.name || '';
     // 검색어와 일치하는 부분을 굵게 강조
     const idx = name.toLowerCase().indexOf(query.toLowerCase());
-    const highlighted = idx === -1 ? name
-      : `${name.slice(0, idx)}<b style="color:var(--accent);">${name.slice(idx, idx + query.length)}</b>${name.slice(idx + query.length)}`;
-    return `<li data-kind-id="${it.kind_id}" data-name="${name.replace(/"/g, '&quot;')}"
+    const highlighted = idx === -1 ? escHtml(name)
+      : `${escHtml(name.slice(0, idx))}<b style="color:var(--accent);">${escHtml(name.slice(idx, idx + query.length))}</b>${escHtml(name.slice(idx + query.length))}`;
+    return `<li data-kind-id="${it.kind_id}" data-name="${escHtml(name)}"
               style="padding:7px 10px; cursor:pointer; border-radius:6px; font-size:14px;"
               onmouseover="this.style.background='var(--line)'" onmouseout="this.style.background='transparent'"
               onclick="pickItemSuggestion(${it.kind_id}, this.dataset.name)">${highlighted}</li>`;
@@ -941,7 +941,7 @@ function hideItemSuggestions() {
 function pickItemSuggestion(kindId, name) {
   document.getElementById('itemName').value = name;
   hideItemSuggestions();
-  run();
+  run({ kind_id: Number(kindId), name });
 }
 
 // 바깥 클릭하면 드롭다운 닫기
@@ -1021,6 +1021,16 @@ document.addEventListener('visibilitychange', () => {
 // getUTC* 메서드로만 값을 읽어 항상 KST로 고정한다.
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+
+// innerHTML 템플릿에 아이템 이름처럼 바깥에서 온 문자열을 끼워 넣을 때 쓴다.
+// 게임 API가 주는 이름이라 실제 위험은 낮지만, &나 < 가 든 이름이 오면 마크업이 깨지고
+// 따옴표가 든 이름은 title="..." 속성을 통째로 무너뜨린다. 곳곳에 흩어져 있던
+// .replace(/"/g,'&quot;') 임시 처리도 이걸로 통일한다.
+function escHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 function toKstDate(isoUtc) {
   return new Date(new Date(isoUtc).getTime() + KST_OFFSET_MS);
@@ -1279,37 +1289,46 @@ async function fetchHistoryData(kindId, days) {
 
 // 조회 버튼 클릭 / 최초 로딩 / 자동갱신 — 아이템 이름 검색부터 다시 하고, 이번 기간(days)
 // 데이터는 캐시를 무시하고 무조건 새로 받아온다(=진짜 "갱신"에 해당하는 경로).
-async function run() {
+//
+// preResolved({kind_id, name})를 넘기면 이름 검색 단계를 통째로 건너뛴다 — 자동완성
+// 드롭다운에서 고른 경우처럼 이미 kind_id까지 확정된 상황에서 검색 API를 한 번 더
+// 태우지 않기 위한 경로다(분당 30회 한도에서 호출 1회가 그냥 낭비였다).
+async function run(preResolved) {
   const name = document.getElementById('itemName').value.trim();
   const days = document.getElementById('daysSel').value;
-  if (!name) { setHint('아이템 이름을 입력하세요.', true); return; }
+  if (!name && !preResolved) { setHint('아이템 이름을 입력하세요.', true); return; }
 
-  setHint('검색 중...');
+  setHint(preResolved ? '시세이력 조회 중...' : '검색 중...');
   try {
-    const searchRes = await apiFetch(`${BASE_URL}/market/items?search=${encodeURIComponent(name)}&limit=20`, { headers: headers() });
-    if (!searchRes.ok) throw new Error(`아이템 검색 실패 (HTTP ${searchRes.status})`);
-    const searchData = await searchRes.json();
-    const list = searchData.data || [];
-    if (list.length === 0) { setHint(`'${name}' 검색 결과 없음`, true); return; }
+    let picked;
+    if (preResolved) {
+      picked = preResolved;
+    } else {
+      const searchRes = await apiFetch(`${BASE_URL}/market/items?search=${encodeURIComponent(name)}&limit=20`, { headers: headers() });
+      if (!searchRes.ok) throw new Error(`아이템 검색 실패 (HTTP ${searchRes.status})`);
+      const searchData = await searchRes.json();
+      const list = searchData.data || [];
+      if (list.length === 0) { setHint(`'${name}' 검색 결과 없음`, true); return; }
 
-    const target = name.replace(/\s/g,'').toLowerCase();
-    const exactMatch = list.find(i => i.name === name)
-                     || list.find(i => (i.name||'').replace(/\s/g,'').toLowerCase() === target);
+      const target = name.replace(/\s/g,'').toLowerCase();
+      const exactMatch = list.find(i => i.name === name)
+                       || list.find(i => (i.name||'').replace(/\s/g,'').toLowerCase() === target);
 
-    // 정확히 하나로 특정되는 이름이면(예: 자동완성에서 골랐거나, 전체 이름을 그대로 입력한 경우)
-    // 예전처럼 그 아이템 하나만 조회한다. 반면 "영혼석"처럼 여러 개에 걸쳐 매칭되는 애매한
-    // 검색어로 그냥 엔터를 친 거라면, 어느 하나를 임의로 골라버리지 않고 매칭되는 아이템
-    // 전부를 감시 목록에 한 번에 추가한다 — 뭐가 있는지 목록에서 직접 보고 고를 수 있게.
-    if (!exactMatch && list.length > 1) {
-      list.forEach(it => ensureWatchListHasItem(it));
-      saveSearchStateToStorage();
-      setHint(`'${name}' 관련 아이템 ${list.length}개를 감시 목록에 모두 추가했습니다.`);
-      return;
+      // 정확히 하나로 특정되는 이름이면(예: 전체 이름을 그대로 입력한 경우) 그 아이템 하나만
+      // 조회한다. 반면 "영혼석"처럼 여러 개에 걸쳐 매칭되는 애매한 검색어로 그냥 엔터를 친
+      // 거라면, 어느 하나를 임의로 골라버리지 않고 매칭되는 아이템 전부를 감시 목록에 한 번에
+      // 추가한다 — 뭐가 있는지 목록에서 직접 보고 고를 수 있게.
+      if (!exactMatch && list.length > 1) {
+        list.forEach(it => ensureWatchListHasItem(it));
+        saveSearchStateToStorage();
+        setHint(`'${name}' 관련 아이템 ${list.length}개를 감시 목록에 모두 추가했습니다.`);
+        return;
+      }
+
+      picked = exactMatch
+            || list.find(i => (i.name||'').replace(/\s/g,'').toLowerCase().includes(target))
+            || list[0];
     }
-
-    let picked = exactMatch
-              || list.find(i => (i.name||'').replace(/\s/g,'').toLowerCase().includes(target))
-              || list[0];
 
     lastKindId = picked.kind_id;
     lastItemName = picked.name;
@@ -2482,10 +2501,12 @@ function toggleAlertPanel(kindId) {
 }
 
 // kindId에 걸린 알림들을 감시목록 행 아래에 펼쳐 보여줄 패널 HTML을 만든다.
-function renderAlertPanelHtml(kindId) {
+// 등록된 알림 목록(<li>들)만 따로 만든다 — 알림이 울리거나 재무장될 때 패널 전체가 아니라
+// 이 부분만 제자리에서 교체하려고 분리했다(patchAlertDisplay 참고).
+function renderAlertItemsHtml(kindId) {
   const list = alertsByKind[kindId] || [];
   const DIR_LABEL = { peak: '상승→하락 전환', trough: '하락→상승 전환', any: '추세 전환(방향 무관)' };
-  const itemsHtml = list.length
+  return list.length
     ? list.map(a => {
         const kindLabel = a.type === 'trailing'
           ? `🎯 고점 대비 ${a.pct}% 하락${a.peakPrice ? ` · 현재 고점 ${Math.round(a.peakPrice).toLocaleString()}` : ''}`
@@ -2501,7 +2522,9 @@ function renderAlertPanelHtml(kindId) {
       `;
       }).join('')
     : '<li class="hint" style="padding:2px 0; list-style:none;">등록된 알림이 없습니다.</li>';
+}
 
+function renderAlertPanelHtml(kindId) {
   return `
     <div class="watch-alert-panel">
       <div class="watch-alert-form">
@@ -2532,8 +2555,27 @@ function renderAlertPanelHtml(kindId) {
         })()}</span>
         <button class="ghost" onclick="addSuggestedPriceAlert(${kindId})">이 가격 이상되면 알림 추가</button>
       </div>
-      <ul style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px;">${itemsHtml}</ul>
+      <ul id="apList_${kindId}" style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px;">${renderAlertItemsHtml(kindId)}</ul>
     </div>`;
+}
+
+// 알림이 울리거나 재무장될 때 실제로 바뀌는 건 "🔔 N" 배지와 등록된 알림 목록 두 곳뿐이다.
+// 예전엔 checkPriceAlerts가 여기서 renderWatchList()로 목록 전체를 다시 그렸는데, 알림 추가
+// 입력칸(ap_price_* / ap_pct_* / ap_trail_pct_*)은 value= 없이 DOM에만 사는 값이라
+// 사용자가 가격을 타이핑하는 중에 아무 아이템이나 알림 하나가 걸리면 입력값과 포커스가
+// 통째로 날아갔다. 저장된 설정값(임계값·연속확인)은 다시 그려도 복원되지만 이 셋은 아니다.
+// reorderWatchListDOM/patchWatchItemDisplay가 같은 이유로 이미 부분 갱신을 쓰고 있어서,
+// 알림 경로만 그 규칙에서 빠져 있던 셈이다.
+function patchAlertDisplay(kindId) {
+  const list = alertsByKind[kindId] || [];
+  const badge = document.getElementById(`wFired_${kindId}`);
+  if (badge) {
+    const firedCount = list.filter(a => a.fired).length;
+    badge.textContent = firedCount ? `🔔 ${firedCount}` : '';
+    badge.style.display = firedCount ? 'inline' : 'none';
+  }
+  const ul = document.getElementById(`apList_${kindId}`); // 알림 패널이 접혀 있으면 없음 — 그때는 배지만 갱신
+  if (ul) ul.innerHTML = renderAlertItemsHtml(kindId);
 }
 
 // 새 가격이 들어올 때마다(조회/자동갱신/스냅샷/감시목록) 해당 kind_id의 알림 조건을 검사한다.
@@ -2802,8 +2844,8 @@ function renderKakaoHistory(list) {
     const timeStr = t.toLocaleString('ko-KR', { hour12: false });
     return `<div style="padding:4px 0; border-bottom:1px dashed var(--line);">
       <b>${statusLabel[h.status] || h.status}</b> · ${timeStr}<br>
-      ${h.itemName ? `<span style="color:var(--dim);">${h.itemName}</span> — ` : ''}${(h.text || '').replace(/</g, '&lt;')}
-      ${h.detail ? `<br><span style="color:var(--dim); font-size:11px;">${h.detail}</span>` : ''}
+      ${h.itemName ? `<span style="color:var(--dim);">${escHtml(h.itemName)}</span> — ` : ''}${escHtml(h.text || '')}
+      ${h.detail ? `<br><span style="color:var(--dim); font-size:11px;">${escHtml(h.detail)}</span>` : ''}
     </div>`;
   }).join('');
 }
@@ -3035,7 +3077,12 @@ function checkPriceAlerts(kindId, price, itemName) {
       if (a.fired && released) { a.fired = false; anyChanged = true; }
     }
   });
-  if (anyChanged) renderWatchList(); // 감시 목록에 도달 배지/패널 반영
+  // 감시 목록에 도달 배지/알림 목록 반영 — 목록 전체를 다시 그리지 않고 그 두 곳만 갈아끼운다
+  // (renderWatchList는 열려 있는 알림 추가 입력칸을 지워버린다 — patchAlertDisplay 주석 참고).
+  if (anyChanged) {
+    patchAlertDisplay(kindId);
+    saveWatchStateToStorage(); // fired 상태 저장 — 예전엔 renderWatchList가 끝에서 대신 해주던 것
+  }
 }
 
 // 추세전환 알림용 — 아이템별 최근 가격 몇 개를 계속 들고 있다가 TEMA 계산에 쓴다.
@@ -3178,8 +3225,8 @@ function renderAlertOutcomeStats() {
         const timeStr = t.toLocaleString('ko-KR', { hour12: false });
         return `<div style="padding:4px 0; border-bottom:1px dashed var(--line);">
           <b style="color:${e.success ? 'var(--up)' : 'var(--down)'};">${e.success ? '✅ 적중' : '❌ 빗나감'}</b>
-          · ${DIR_LABEL[e.direction] || e.direction} · ${e.alertLabel} · ${timeStr}<br>
-          <span style="color:var(--dim);">${e.itemName}</span> — ${e.priceAtFire.toLocaleString()} → ${e.priceAfter.toLocaleString()}
+          · ${DIR_LABEL[e.direction] || e.direction} · ${escHtml(e.alertLabel)} · ${timeStr}<br>
+          <span style="color:var(--dim);">${escHtml(e.itemName)}</span> — ${e.priceAtFire.toLocaleString()} → ${e.priceAfter.toLocaleString()}
         </div>`;
       }).join('');
     }
@@ -3628,9 +3675,9 @@ function renderCraftMaterialSuggestions(rowId, list, query) {
   box.innerHTML = list.map(it => {
     const name = it.name || '';
     const idx = name.toLowerCase().indexOf(query.toLowerCase());
-    const highlighted = idx === -1 ? name
-      : `${name.slice(0, idx)}<b style="color:var(--accent);">${name.slice(idx, idx + query.length)}</b>${name.slice(idx + query.length)}`;
-    return `<li data-kind-id="${it.kind_id}" data-name="${name.replace(/"/g, '&quot;')}"
+    const highlighted = idx === -1 ? escHtml(name)
+      : `${escHtml(name.slice(0, idx))}<b style="color:var(--accent);">${escHtml(name.slice(idx, idx + query.length))}</b>${escHtml(name.slice(idx + query.length))}`;
+    return `<li data-kind-id="${it.kind_id}" data-name="${escHtml(name)}"
               style="padding:7px 10px; cursor:pointer; border-radius:6px; font-size:14px;"
               onmouseover="this.style.background='var(--line)'" onmouseout="this.style.background='transparent'"
               onclick="pickCraftMaterialSuggestion(${rowId}, ${it.kind_id}, this.dataset.name)">${highlighted}</li>`;
@@ -3706,7 +3753,7 @@ function renderCraftMaterialRows() {
     <div class="craft-mat-row" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
       <div style="position:relative; flex:1; min-width:160px;">
         <input type="text" class="craft-mat-input" placeholder="재료 이름 검색 (예: 파동의 영혼석)"
-          value="${(row.name || '').replace(/"/g, '&quot;')}" autocomplete="off"
+          value="${escHtml(row.name || '')}" autocomplete="off"
           oninput="onCraftMaterialInput(${row.id}, this.value)"
           onkeydown="if(event.key==='Escape') hideCraftMaterialSuggestions(${row.id})"
           style="width:100%;">
@@ -3754,7 +3801,7 @@ function renderCraftCalc() {
   }
   if (missing.length) {
     resultBox.style.display = 'block';
-    resultBox.innerHTML = `<span style="color:var(--down);">⚠ 현재가를 아직 모르는 재료가 있어요: ${missing.join(', ')} — 검색 결과에서 재료를 다시 선택해주세요.</span>`;
+    resultBox.innerHTML = `<span style="color:var(--down);">⚠ 현재가를 아직 모르는 재료가 있어요: ${escHtml(missing.join(', '))} — 검색 결과에서 재료를 다시 선택해주세요.</span>`;
     return;
   }
 
@@ -4165,23 +4212,47 @@ function computeDepletionBadgeText(w) {
 // 가지고 지금 가격의 상대적 위치를 판단한다.
 const PERCENTILE_WINDOW_DAYS = 7; // 이보다 오래된 시세는 완전히 제외 — 패치 주기(1주)에 맞춤
 
-// historyCacheByKind에 캐시된 여러 기간(daysSel) 중 가장 길게 불러와둔 엔트리를 골라,
-// 그 안에서 PERCENTILE_WINDOW_DAYS(7일) 컷오프 안쪽의 종가만 추출해 반환한다.
+// historyCacheByKind에 캐시된 여러 기간(daysSel) 중 하나를 골라, 그 안에서
+// PERCENTILE_WINDOW_DAYS(7일) 컷오프 안쪽의 종가만 추출해 반환한다.
 // (화면 상단 기간 선택 드롭다운과 무관하게 신호 계산은 항상 이 7일 고정 창만 봄.)
 // computePricePercentileRank / computePercentileForKind / computeSuggestedThresholdPct가
 // 공통으로 쓰는 로직이라 여기 한 곳에서만 관리한다.
+//
+// ★ 어느 엔트리를 고르느냐가 표본 수를 좌우한다 — 예전엔 "가장 긴 기간"을 골랐는데,
+// 컷오프가 7일 고정이라 기간이 길수록 봉이 굵어져서(30·90일=일봉) 7일 안에 남는 종가가
+// 오히려 줄어든다. 90일 차트를 한 번 봤다는 이유만으로 표본이 168개(7일=1시간봉)에서
+// 7~8개(일봉)로 떨어지고, 그러면 백분위 한 칸이 14%p씩 튀면서 신호 스코어의 주 지표
+// (±85점)와 ✨추천 임계값·적정 등록가가 통째로 거칠어진다. 그래서 "가장 긴 기간"이
+// 아니라 "컷오프 안에 점이 가장 많은 기간"을 고른다.
+//
+// 캐시(stamp)가 그대로인 동안은 결과 배열을 그대로 재사용한다 — 이 함수는 스코어 1회
+// 계산에 3번, 정렬 비교마다 반복해서 불리는 최다 호출 지점이라, 매번 전체 포인트에
+// new Date()를 걸면 감시 목록이 클 때 렌더가 눈에 띄게 밀린다.
+let recentClosesCache = {}; // { [kindId]: { stamp, at, closes } }
+const RECENT_CLOSES_MEMO_MS = 30000; // 캐시가 안 바뀌어도 7일 컷오프는 시간이 흐르므로 이 간격마다 재계산
+
 function getRecentClosesForKind(kindId) {
   const kindCache = historyCacheByKind[kindId];
   if (!kindCache) return null;
   const entries = Object.entries(kindCache).filter(([, e]) => e && e.histData && e.histData.points && e.histData.points.length);
   if (!entries.length) return null;
-  entries.sort((a, b) => (Number(b[0]) || 0) - (Number(a[0]) || 0));
-  const entry = entries[0][1];
+
+  // 스탬프는 (기간:저장시각) 조합 — 히스토리가 갱신되면 저절로 무효화된다.
+  const stamp = entries.map(([d, e]) => d + ':' + e.ts).join('|');
+  const memo = recentClosesCache[kindId];
+  if (memo && memo.stamp === stamp && (Date.now() - memo.at) < RECENT_CLOSES_MEMO_MS) return memo.closes;
+
   const cutoff = Date.now() - PERCENTILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  const closes = (entry.histData.points || [])
-    .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined && p.time && new Date(p.time).getTime() >= cutoff)
-    .map(p => p.close);
-  return closes.length ? closes : null;
+  let best = null;
+  for (const [, e] of entries) {
+    const closes = (e.histData.points || [])
+      .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined && p.time && new Date(p.time).getTime() >= cutoff)
+      .map(p => p.close);
+    if (!best || closes.length > best.length) best = closes;
+  }
+  const result = (best && best.length) ? best : null;
+  recentClosesCache[kindId] = { stamp, at: Date.now(), closes: result };
+  return result;
 }
 
 function computePricePercentileRank(kindId, price) {
@@ -4263,9 +4334,15 @@ function computeSignalScore(w) {
 // TEMA(3)와 맥락 EMA(대략 전체 캐시 구간의 1/4 기간)를 캐시된 시세이력으로 계산해서,
 // 마지막 캔들에서 "방금 막" 교차가 일어났는지만 확인한다. 데이터가 모자라거나(6개 미만)
 // 캐시가 아직 없으면(한 번도 조회 안 한 아이템) null — 이 경우 점수에 아예 반영하지 않는다.
+// TEMA(3중 EMA) + EMA를 매 호출마다 다시 돌리면 정렬·렌더 중에 같은 계산이 수백 번 반복된다.
+// getRecentClosesForKind가 캐시가 그대로인 동안 "같은 배열 객체"를 돌려주므로, 그 배열을
+// 키로 잡아두면 히스토리가 갱신되는 순간 키 자체가 바뀌어 자동으로 무효화된다.
+const maCrossMemo = new WeakMap(); // closes 배열 → 교차 신호(-1/0/1)
+
 function computeMaCrossSignal(kindId) {
   const closes = getRecentClosesForKind(kindId);
   if (!closes || closes.length < 6) return null;
+  if (maCrossMemo.has(closes)) return maCrossMemo.get(closes);
   const temaPeriod = Math.min(3, closes.length);
   const contextPeriod = Math.max(5, Math.round(closes.length / 4));
   const tema = computeTEMA(closes, temaPeriod);
@@ -4273,9 +4350,12 @@ function computeMaCrossSignal(kindId) {
   const n = closes.length;
   const prevDiff = tema[n - 2] - context[n - 2];
   const curDiff = tema[n - 1] - context[n - 1];
-  if (prevDiff <= 0 && curDiff > 0) return 1;  // 방금 상향 돌파 — 사기 쪽 참고
-  if (prevDiff >= 0 && curDiff < 0) return -1; // 방금 하향 돌파 — 팔기 쪽 참고
-  return 0; // 교차 없음(계속 같은 쪽에 머무는 중) — 이미 지나간 상태라 반영 안 함
+  let signal;
+  if (prevDiff <= 0 && curDiff > 0) signal = 1;       // 방금 상향 돌파 — 사기 쪽 참고
+  else if (prevDiff >= 0 && curDiff < 0) signal = -1; // 방금 하향 돌파 — 팔기 쪽 참고
+  else signal = 0; // 교차 없음(계속 같은 쪽에 머무는 중) — 이미 지나간 상태라 반영 안 함
+  maCrossMemo.set(closes, signal);
+  return signal;
 }
 
 // 점수(-100~100)를 5칸짜리 강도 막대(●○○○○)로 변환.
@@ -4400,21 +4480,23 @@ function getSortedWatchList() {
     // 신호 점수(최근 7일 고정 창 백분위 + 수수료 반영) 기준 — 양수(사기 좋음)일수록 위,
     // 음수(팔기 좋음)일수록 아래. 이 순서 그대로 "맨 아래에 있는 아이템 = 지금 파밍해서
     // 팔면 유리한 아이템"으로 읽으면 된다.
-    const scoreFor = (w) => computeSignalScore(w);
+    // 비교 함수 안에서 점수를 계산하면 sort가 같은 계산을 O(n log n)번 반복한다
+    // (20개면 약 170회). 아이템당 딱 한 번씩만 계산해두고 그 값으로 정렬한다.
+    const scores = new Map(arr.map(w => [w.kind_id, computeSignalScore(w)]));
     arr.sort((a, b) => {
-      const sa = scoreFor(a), sb = scoreFor(b);
+      const sa = scores.get(a.kind_id), sb = scores.get(b.kind_id);
       if (sa === null && sb === null) return 0;
       if (sa === null) return 1;
       if (sb === null) return -1;
       return sb - sa;
     });
   } else if (watchSortMode === 'valuation') {
-    const devFor = (w) => {
+    const devs = new Map(arr.map(w => {
       const badge = computeValuationBadge(w);
-      return badge ? badge.devPct : null;
-    };
+      return [w.kind_id, badge ? badge.devPct : null];
+    }));
     arr.sort((a, b) => {
-      const da = devFor(a), db = devFor(b);
+      const da = devs.get(a.kind_id), db = devs.get(b.kind_id);
       if (da === null && db === null) return 0;
       if (da === null) return 1;
       if (db === null) return -1;
@@ -4488,7 +4570,9 @@ function patchWatchItemDisplay(kindId) {
     projEl.textContent = proj ? proj.text : '예상(15분) —';
     projEl.style.color = proj ? proj.color : 'var(--dim)';
   }
-  renderCraftCalc(); // 이 아이템이 제작 계산기 재료로 쓰이고 있을 수 있으니 가격 갱신 때마다 같이 재계산
+  // 이 아이템이 제작 계산기 재료로 실제로 쓰일 때만 재계산한다. 예전엔 무조건 불렀는데,
+  // refreshWatchItem이 아이템당 이 함수를 최대 2번 부르므로 한 주기에 20번까지 헛돌았다.
+  if (craftMaterialRows.some(r => r.kindId === kindId)) renderCraftCalc();
 }
 
 function renderWatchList() {
@@ -4528,11 +4612,11 @@ function renderWatchList() {
     return `
       <div class="watch-item-wrap" id="wRow_${w.kind_id}">
         <div class="watch-item">
-          <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${w.name}</span>
+          <span class="w-name" onclick="switchToWatchItem(${w.kind_id})">${escHtml(w.name)}</span>
           <span class="w-price" id="wPrice_${w.kind_id}">${priceTxt}</span>
-          <span class="w-signal-primary" id="wSignal_${w.kind_id}" title="${(signalBadge ? signalBadge.tooltip : '').replace(/"/g, '&quot;')}" style="color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
+          <span class="w-signal-primary" id="wSignal_${w.kind_id}" title="${escHtml(signalBadge ? signalBadge.tooltip : '')}" style="color:${signalBadge ? signalBadge.color : 'var(--dim)'}; display:${signalBadge ? 'inline-block' : 'none'};">${signalBadge ? signalBadge.text : ''}</span>
           <span class="w-deplete" id="wDeplete_${w.kind_id}" style="display:${depleteBadgeTxt ? 'inline-block' : 'none'};">${depleteBadgeTxt || ''}</span>
-          ${firedCount ? `<span class="alert-hit">🔔 ${firedCount}</span>` : ''}
+          <span class="alert-hit" id="wFired_${w.kind_id}" style="display:${firedCount ? 'inline' : 'none'};">${firedCount ? `🔔 ${firedCount}` : ''}</span>
         </div>
         <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
           <span class="w-valuation" id="wDevPct_${w.kind_id}" title="평균은 참고용 흐름 지표일 뿐, 실제 판단 기준은 위쪽 신호 배지예요" style="color:${devColor};">${devTxt}</span>

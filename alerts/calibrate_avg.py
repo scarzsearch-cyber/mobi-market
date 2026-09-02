@@ -16,6 +16,8 @@ import json
 import os
 import statistics
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -31,10 +33,32 @@ TRUTH = [
 ]
 
 
-def fetch(url, key):
-    req = urllib.request.Request(url, headers={"Accept": "application/json", "Authorization": "Bearer " + key})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode("utf-8"))
+_CACHE = {}   # 같은 URL 은 한 번만 받는다 — 보고서 3개가 아이템마다 이력을 다시 받다가 429 를 맞았다
+_IDX = [0]
+
+
+def fetch(url, keys):
+    """키를 돌려 쓰고, 429 면 다음 키로 넘어가며, 같은 URL 은 캐시한다."""
+    if isinstance(keys, str):
+        keys = [keys]
+    if url in _CACHE:
+        return _CACHE[url]
+    for _ in range(len(keys) * 2):
+        k = keys[_IDX[0] % len(keys)]
+        _IDX[0] += 1
+        req = urllib.request.Request(url, headers={"Accept": "application/json", "Authorization": "Bearer " + k})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            _CACHE[url] = data
+            time.sleep(1.5)
+            return data
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                time.sleep(4)
+                continue
+            raise
+    raise RuntimeError("모든 키가 한도에 걸렸습니다 — 잠시 후 다시 실행하세요")
 
 
 def parse_ts(s):
@@ -78,7 +102,7 @@ def estimates(points, t_end):
 
 
 def main():
-    key = os.environ.get("MOBI_API_KEY", "").strip().split()[0] if os.environ.get("MOBI_API_KEY", "").strip() else ""
+    key = os.environ.get("MOBI_API_KEY", "").replace(",", " ").split()  # 여러 개면 전부 돌려 쓴다
     if not key:
         print("MOBI_API_KEY 없음")
         return 1

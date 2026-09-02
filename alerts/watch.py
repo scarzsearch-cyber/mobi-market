@@ -12,13 +12,9 @@ index.html 은 브라우저 탭이 열려 있어야만 감시가 돌아간다(�
     오류를 알릴 때도 상태코드와 우리가 쓴 문구만 남긴다.
 
 ★ 브라우저와 이 스크립트의 역할 분담
-  - 여기서 하는 것: 가격/수량 기반 알림(저가하락·저가상승·신규매물·품귀·목표가·트레일링).
-    전부 "최신 스냅샷 하나 + 직전 값"만으로 판정되는 것들이라 서버에서 그대로 재현된다.
-  - 여기서 안 하는 것: 종합 신호 스코어(🟢사기 좋음 / 🔴팔기 좋음)와 TEMA 추세전환.
-    둘 다 시세이력 백분위·이동평균이 필요한데, 그걸 파이썬으로 옮기면 같은 숫자를 만드는
-    구현이 두 개가 된다. 그러면 한쪽만 고쳤을 때 화면과 카톡이 서로 다른 값을 말하게 된다
-    — 이건 실제로 겪은 유형의 사고다(index.html 의 자동 현재가가 두 곳에서 갈렸던 건).
-    스코어는 화면이 유일한 출처로 남긴다.
+  - 여기서 하는 것: 천장 기준 신호(천장근접·저가·되사기), 품귀, 저가하락·저가상승(% 변동), 목표가.
+    전부 "최신 스냅샷 하나 + 직전 값 + 사람이 입력한 평균가"만으로 판정되는 것들이라
+    서버에서 화면과 똑같이 재현된다. 판정 규약은 index.html 과 같다(bandPosPct/rebuyInfo).
 """
 
 import json
@@ -275,16 +271,14 @@ def evaluate(item, prev, w, alerts):
 
     state = {"price": price, "count": count, "soldOut": sold_out,
              "streak_low": 0, "streak_high": 0,
-             "peak": prev.get("peak"), "fired": dict(prev.get("fired") or {})}
+             "fired": dict(prev.get("fired") or {})}
 
     def fmt(n):
         return f"{n:,}" if isinstance(n, (int, float)) else "—"
 
-    # ── 신규 매물 / 품귀 (직전 대비 수량 증감) ──
+    # ── 품귀 (직전 대비 수량 감소) ──
     # 첫 실행이면 비교 기준이 없으므로 건너뛴다 (index.html 과 같은 규약).
     if prev_count is not None and count is not None:
-        if w.get("newListingAlert") and (count - prev_count) >= (w.get("newListingThreshold") or 1):
-            msgs.append(f"🆕 {name} 매물 {fmt(prev_count)} → {fmt(count)}개 (현재 최저가 {fmt(price) if price else '품절'})")
         if w.get("listingDropAlert") and (prev_count - count) >= (w.get("listingDropThreshold") or 1):
             msgs.append(f"⚠ {name} 매물 {fmt(prev_count)} → {fmt(count)}개 — 품귀 진행 중, 팔기 좋은 타이밍일 수 있어요")
 
@@ -318,20 +312,8 @@ def evaluate(item, prev, w, alerts):
             aid = str(a.get("id"))
             atype = a.get("type") or "threshold"
 
-            if atype == "trailing":
-                peak = state.get("peak")
-                if peak is None or price > peak:
-                    state["peak"] = price
-                    state["fired"].pop(aid, None)  # 새 고점 = 재무장
-                    continue
-                drop_pct = (peak - price) / peak * 100
-                if drop_pct >= (a.get("pct") or 0) and not state["fired"].get(aid):
-                    state["fired"][aid] = True
-                    msgs.append(f"🎯 {name} 고점 {fmt(round(peak))} 대비 -{drop_pct:.1f}% ({fmt(price)})")
-                continue
-
-            if atype == "trend_reversal":
-                continue  # 이력·TEMA 가 필요해 서버에서는 판정하지 않는다 (파일 상단 주석 참고)
+            if atype != "threshold":
+                continue  # 목표가만 남았다 — 예전 형식(trailing/trend_reversal)이 있어도 건너뛴다
 
             target = a.get("price")
             if target is None:

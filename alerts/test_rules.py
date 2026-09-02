@@ -28,19 +28,14 @@ def snap(price=1000, count=10, sold_out=False):
 
 
 print("\n[1] 첫 실행에는 아무것도 울리지 않는다 (비교 기준 없음)")
-w = {"kind_id": 1, "name": "테스트", "newListingAlert": True, "listingDropAlert": True,
+w = {"kind_id": 1, "name": "테스트", "listingDropAlert": True,
      "lowestPriceAlert": True, "highestPriceAlert": True}
 msgs, st = watch.evaluate(snap(), {}, w, [])
 check("첫 실행 알림 0건", len(msgs), 0)
 check("상태에 가격 기록됨", st["price"], 1000)
 
-print("\n[2] 신규매물 / 품귀 — 임계값 미만은 안 울린다")
+print("\n[2] 품귀 — 임계값 미만은 안 울린다")
 prev = {"price": 1000, "count": 10, "soldOut": False}
-w2 = {"kind_id": 1, "name": "테스트", "newListingAlert": True, "newListingThreshold": 3}
-msgs, _ = watch.evaluate(snap(count=12), prev, w2, [])
-check("2개 증가(임계 3) → 안 울림", len(msgs), 0)
-msgs, _ = watch.evaluate(snap(count=13), prev, w2, [])
-check("3개 증가(임계 3) → 울림", len(msgs), 1)
 w3 = {"kind_id": 1, "name": "테스트", "listingDropAlert": True, "listingDropThreshold": 4}
 msgs, _ = watch.evaluate(snap(count=6), prev, w3, [])
 check("4개 감소(임계 4) → 품귀 울림", len(msgs), 1)
@@ -87,22 +82,7 @@ check("950 (-5%) → 아직 재무장 안 함", st["fired"].get("8"), True)
 msgs, st = watch.evaluate(snap(price=890), {**prev, "fired": {"8": True}}, w5, alm)
 check("890 (-11%) → 재무장", st["fired"].get("8"), None)
 
-print("\n[7] 트레일링 — 새 고점마다 재무장")
-alt = [{"id": 9, "type": "trailing", "pct": 10}]
-msgs, st = watch.evaluate(snap(price=1000), {}, w5, alt)
-check("첫 관측 → 고점 기록만", st["peak"], 1000)
-check("첫 관측엔 안 울림", len(msgs), 0)
-msgs, st = watch.evaluate(snap(price=1200), {"peak": 1000}, w5, alt)
-check("신고점 → 고점 갱신", st["peak"], 1200)
-msgs, st = watch.evaluate(snap(price=1140), {"peak": 1200}, w5, alt)
-check("고점 대비 -5% → 안 울림", len(msgs), 0)
-msgs, st = watch.evaluate(snap(price=1050), {"peak": 1200}, w5, alt)
-check("고점 대비 -12.5% → 울림", len(msgs), 1)
-check("트레일링 fired 기록", st["fired"].get("9"), True)
-msgs, st = watch.evaluate(snap(price=1300), {"peak": 1200, "fired": {"9": True}}, w5, alt)
-check("새 고점 → 재무장", st["fired"].get("9"), None)
-
-print("\n[8] trend_reversal 은 서버에서 판정하지 않는다 (화면 전용)")
+print("\n[8] 목표가가 아닌 옛 형식은 건너뛴다")
 msgs, _ = watch.evaluate(snap(price=1), prev, w5, [{"id": 10, "type": "trend_reversal", "direction": "any"}])
 check("추세전환 알림 0건", len(msgs), 0)
 

@@ -149,6 +149,54 @@ check("다시 올라가면 재무장", st["fired"].get("rebuy"), None)
 msgs, st = watch.evaluate(snap(price=80), base, {**w12, "mySellPrice": None}, [])
 check("판매가 없으면 되사기 없음", len(msgs), 0)
 
+
+# ── [13] 평균가 추정기 + 우선순위 (index.html effectiveAvg 와 같은 규약, 같은 픽스처) ──
+print("")
+print("[13] 평균가 추정 — 72h 거래량 가중, 6h 관측 하한, 우선순위")
+from datetime import datetime, timezone, timedelta
+NOW = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+NOW_TS = NOW.timestamp()
+def pt(h_ago, close, high, c_open, c_close):
+    return {"time": (NOW - timedelta(hours=h_ago)).isoformat().replace("+00:00", "Z"),
+            "close": close, "high": high, "count_open": c_open, "count_close": c_close}
+# 8시간치. 팔린 수량 = count_open − count_close → 110 에서 20개, 130 에서 40개 → 가중평균 123.33
+# 최근 6h 창은 >= 라 정확히 6h 전 캔들도 포함된다. 그래서 창 밖 검사는 8h·7h 전에 둔다.
+# 창 안(5h..0h) max(high) = 150 → 하한 100. 8h·7h 전의 high 200 은 창 밖이라 무시돼야 한다.
+PTS = [pt(8, 100, 200, 50, 50), pt(7, 100, 200, 50, 50),
+       pt(5, 110, 115, 60, 50), pt(4, 110, 125, 60, 50),
+       pt(3, 120, 125, 50, 50), pt(2, 120, 135, 50, 50),
+       pt(1, 130, 135, 70, 50), pt(0, 130, 150, 70, 50)]
+est, floor_avg, n = watch.estimate_avg(PTS, NOW_TS)
+check("표본 8", n, 8)
+check("거래량 가중 평균 123.33", round(est, 2), 123.33)
+check("6h 관측 하한 150/1.5=100 (8h·7h 전 200 은 창 밖)", round(floor_avg, 2), 100.0)
+ZERO = [pt(5, 100, 100, 9, 9), pt(4, 110, 110, 9, 9), pt(3, 120, 120, 9, 9),
+        pt(2, 130, 130, 9, 9), pt(1, 140, 140, 9, 9), pt(0, 150, 150, 9, 9)]
+est2, _, n2 = watch.estimate_avg(ZERO, NOW_TS)
+check("팔린 수량 0 이면 단순 평균으로 (6개 → 125)", (n2, round(est2, 2)), (6, 125.0))
+check("표본 5개 이하면 None", watch.estimate_avg(PTS[:5], NOW_TS)[0], None)
+
+ms = lambda h_ago: int((NOW_TS - h_ago * 3600) * 1000)
+a, src, rc = watch.effective_avg({"avgPrice": 150, "avgPriceAt": ms(1)}, est, floor_avg, NOW_TS)
+check("1h 전 입력 150 → 입력", (a, src, rc), (150, "입력", False))
+a, src, rc = watch.effective_avg({"avgPrice": 90, "avgPriceAt": ms(1)}, est, floor_avg, NOW_TS)
+check("입력 90 < 하한 100 → 하한으로 올리고 재보정", (a, src, rc), (100.0, "입력·하한", True))
+a, src, rc = watch.effective_avg({"avgPrice": 150, "avgPriceAt": ms(13), "avgRatio": 0.9, "avgRatioAt": ms(24)}, est, floor_avg, NOW_TS)
+check("13h 전 입력은 낡음 → 추정×0.9 = 111 (보정)", (round(a, 2), src, rc), (111.0, "보정", False))
+a, src, rc = watch.effective_avg({"avgRatio": 0.9, "avgRatioAt": ms(24 * 8)}, est, floor_avg, NOW_TS)
+check("계수가 8일 넘으면 재보정 권장", (round(a, 2), src, rc), (111.0, "보정", True))
+a, src, rc = watch.effective_avg({}, est, floor_avg, NOW_TS)
+check("아무것도 없으면 미보정 추정", (round(a, 2), src, rc), (123.33, "미보정", True))
+a, src, rc = watch.effective_avg({"avgPrice": 140, "avgPriceAt": ms(30)}, None, None, NOW_TS)
+check("추정 불가 + 옛 입력 → 옛입력", (a, src, rc), (140, "옛입력", True))
+a, src, rc = watch.effective_avg({}, None, None, NOW_TS)
+check("아무것도 없으면 None", a, None)
+
+# evaluate 는 avgPrice_effective 를 우선한다
+w13 = {"kind_id": 1, "name": "테스트", "avgPrice": 999, "avgPrice_effective": 100, "sellHighAlert": True}
+msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, w13, [])
+check("유효 평균 100 → 천장 150, 140은 93% → 울림", len(msgs), 1)
+
 print("\n" + ("─" * 50))
 print("❌ 실패 " + str(len(fails)) + "건: " + ", ".join(fails) if fails else "✅ 전부 통과")
 sys.exit(1 if fails else 0)

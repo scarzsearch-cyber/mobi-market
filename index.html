@@ -620,6 +620,7 @@ function slimWatchItem(w) {
     listingDropPct: w.listingDropPct || 0,
     // 천장 기준 신호 (v2 전략): 평균가는 게임에서 읽어 사람이 입력한다 — API 로는 재현이 안 된다(오차 15%).
     avgPrice: (w.avgPrice > 0) ? w.avgPrice : null, avgPriceAt: w.avgPriceAt || null,
+    avgRatio: (w.avgRatio > 0) ? w.avgRatio : null, avgRatioAt: w.avgRatioAt || null,
     mySellPrice: (w.mySellPrice > 0) ? w.mySellPrice : null,
     sellHighAlert: !!w.sellHighAlert, sellHighPct: w.sellHighPct || 90,
     buyLowAlert: !!w.buyLowAlert, buyLowPct: w.buyLowPct || 60,
@@ -640,6 +641,7 @@ function restoreWatchItem(w) {
     listingDropPct: w.listingDropPct || 0,
     // 천장 기준 신호 (v2 전략): 평균가는 게임에서 읽어 사람이 입력한다 — API 로는 재현이 안 된다(오차 15%).
     avgPrice: (w.avgPrice > 0) ? w.avgPrice : null, avgPriceAt: w.avgPriceAt || null,
+    avgRatio: (w.avgRatio > 0) ? w.avgRatio : null, avgRatioAt: w.avgRatioAt || null,
     mySellPrice: (w.mySellPrice > 0) ? w.mySellPrice : null,
     sellHighAlert: !!w.sellHighAlert, sellHighPct: w.sellHighPct || 90,
     buyLowAlert: !!w.buyLowAlert, buyLowPct: w.buyLowPct || 60,
@@ -3514,8 +3516,12 @@ function setAvgPrice(kindId, val) {
   const w = watchList.find(x => x.kind_id === kindId);
   if (!w) return;
   const n = parseFloat(String(val).replace(/,/g, ''));
-  if (n > 0) { w.avgPrice = n; w.avgPriceAt = Date.now(); }
-  else { w.avgPrice = null; w.avgPriceAt = null; }
+  if (n > 0) {
+    w.avgPrice = n; w.avgPriceAt = Date.now();
+    // 보정 계수 학습: 게임 값 ÷ 지금 추정치. 추정이 없으면(이력 미수신) 계수는 다음 기회에.
+    const { est } = estimateAvgFromHistory(kindId);
+    if (est > 0) { w.avgRatio = n / est; w.avgRatioAt = Date.now(); }
+  } else { w.avgPrice = null; w.avgPriceAt = null; w.avgRatio = null; w.avgRatioAt = null; }
   w._sellHighFired = false; w._buyLowFired = false;
   saveWatchStateToStorage();
   patchWatchItemDisplay(kindId);
@@ -3999,6 +4005,9 @@ async function refreshWatchItem(w) {
     pushCountHistory(w.kind_id, found.total_count, w.lastUpdated);
     w.depletionEtaMin = computeDepletionEtaMin(w.kind_id, found.total_count);
 
+    // 평균가 추정에 쓸 7일 이력 확보 (없거나 1시간 넘었을 때만 — 큐가 속도를 맞춘다)
+    await ensureEstimateHistory(w.kind_id, w.name);
+
     // ── 천장 기준 신호 (v2) — 한 번 울리면 기준에서 10%p 벗어나야 재무장 (경계선 진동 방지) ──
     const bandPos = bandPosPct(w);
     if (bandPos !== null) {
@@ -4232,7 +4241,89 @@ const SELL_FEE_PCT = 15; // 판매 수수료 — 제작 계산기·되사기 손
 const CEILING_MULT = 1.5;
 const AVG_STALE_MS = 12 * 60 * 60 * 1000; // 게임 갱신 주기 — 이보다 오래된 입력은 낡았다고 표시
 
-function ceilingOf(w) { return (w.avgPrice > 0) ? Math.round(w.avgPrice * CEILING_MULT) : null; }
+// ---- 평균가: 자동 추정 + 보정 계수 + 관측 하한 ----
+// 게임 평균은 API 로 정확히 재현되지 않는다(체결가 vs 최저 매물, 아이템별 최대 15% 차이).
+// 그래서 세 겹으로 간다:
+//   ① 자동 추정: 최근 72시간 종가를 팔린 수량(count_open − count_close)으로 가중 평균.
+//      calibrate_avg.py 에서 24가지 중 가장 나았던 방법이다.
+//   ② 보정 계수: 사용자가 게임 평균을 한 번 입력하면 (입력값 ÷ 그때 추정치) 를 저장하고,
+//      그 뒤로는 추정치 × 계수를 쓴다. 차이가 아이템 고유 성질(호가 두께)이라 계수가
+//      비교적 안정적이라는 가정 — 틀리면 아래 ③이 잡아낸다.
+//   ③ 관측 하한: 최저가는 천장을 절대 못 넘으므로 최근 6시간 max(high) ÷ 1.5 는 평균의
+//      확실한 하한이다. 추정이 그보다 낮으면 하한으로 끌어올리고 "재보정 권장"을 띄운다.
+//      (plateau 를 천장으로 '단정'하지는 않는다 — 용비늘에서 큰 매물 하나가 7시간 눌러앉아
+//      가짜 plateau 를 만드는 걸 실측했다. 하한으로만 쓰면 언제나 안전하다.)
+// 우선순위: 12시간 안에 입력한 값 > 추정×계수 > 미보정 추정. 어느 쪽이든 하한은 적용.
+const EST_WINDOW_H = 72;
+const EST_FLOOR_WINDOW_H = 6;
+const EST_MIN_POINTS = 6;
+const RATIO_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 이보다 오래된 계수는 "다시 한 번 입력" 권장
+
+// 캐시된 시세이력에서 72h 추정과 6h 관측 하한을 낸다. 부족하면 null 필드.
+function estimateAvgFromHistory(kindId) {
+  const kindCache = historyCacheByKind[kindId];
+  if (!kindCache) return { est: null, floorAvg: null, n: 0 };
+  const now = Date.now();
+  const t0 = now - EST_WINDOW_H * 3600000, tf = now - EST_FLOOR_WINDOW_H * 3600000;
+  let best = null;
+  for (const e of Object.values(kindCache)) {
+    const pts = (e && e.histData && e.histData.points) || [];
+    const win = pts.filter(p => p.close != null && p.time && new Date(p.time).getTime() >= t0);
+    if (!best || win.length > best.length) best = win;
+  }
+  if (!best || best.length < EST_MIN_POINTS) return { est: null, floorAvg: null, n: best ? best.length : 0 };
+  let wsum = 0, psum = 0;
+  for (const p of best) {
+    const sold = Math.max(0, (p.count_open || 0) - (p.count_close || 0));
+    wsum += sold; psum += p.close * sold;
+  }
+  const est = wsum > 0 ? psum / wsum : best.reduce((a, p) => a + p.close, 0) / best.length;
+  const recent = best.filter(p => p.high != null && new Date(p.time).getTime() >= tf);
+  const floorAvg = recent.length ? Math.max(...recent.map(p => p.high)) / CEILING_MULT : null;
+  return { est, floorAvg, n: best.length };
+}
+
+// 지금 이 아이템에 쓸 평균가와 그 출처. { avg, source, recalib } — avg 가 null 이면 천장 신호 불가.
+function effectiveAvg(w) {
+  const { est, floorAvg } = estimateAvgFromHistory(w.kind_id);
+  const typedFresh = w.avgPrice > 0 && w.avgPriceAt && (Date.now() - w.avgPriceAt) <= AVG_STALE_MS;
+  let avg = null, source = null, recalib = false;
+  if (typedFresh) { avg = w.avgPrice; source = '입력'; }
+  else if (est && w.avgRatio > 0) {
+    avg = est * w.avgRatio; source = '보정';
+    if (!w.avgRatioAt || (Date.now() - w.avgRatioAt) > RATIO_STALE_MS) recalib = true;
+  }
+  else if (est) { avg = est; source = '미보정'; recalib = true; }
+  else if (w.avgPrice > 0) { avg = w.avgPrice; source = '옛입력'; recalib = true; }
+  if (avg !== null && floorAvg && floorAvg > avg * 1.001) {
+    // 추정이 관측 하한보다 낮다 = 확실히 틀렸다. 하한으로 올리고 재보정을 권한다.
+    avg = floorAvg; source += '·하한'; recalib = true;
+  }
+  return { avg, source, recalib, est, floorAvg };
+}
+
+// 카드에 보이는 "평균 N (출처)" 한 줄. 카드 렌더와 부분 갱신이 같은 함수를 써서 어긋나지 않게 한다.
+function avgLine(w) {
+  const ea = effectiveAvg(w);
+  if (ea.avg === null) return '평균 —';
+  const tag = { '입력': '입력', '보정': '보정', '미보정': '미보정 ±15%', '옛입력': '옛 입력' }[ea.source.split('·')[0]] || ea.source;
+  return `평균 <b style="color:var(--text);">${Math.round(ea.avg).toLocaleString()}</b> <span style="opacity:.75;">${tag}${ea.source.includes('하한') ? '·하한' : ''}</span>${ea.recalib ? ' ⏰' : ''}`;
+}
+function avgTitle(w) {
+  const ea = effectiveAvg(w);
+  const parts = [];
+  if (ea.est) parts.push(`API 추정(72h 거래량 가중) ${Math.round(ea.est).toLocaleString()}`);
+  if (w.avgRatio > 0) parts.push(`보정 계수 ×${w.avgRatio.toFixed(3)} (${w.avgRatioAt ? timeAgoText(w.avgRatioAt).replace(' 갱신', ' 학습') : ''})`);
+  if (w.avgPrice > 0 && w.avgPriceAt) parts.push(`마지막 입력 ${Math.round(w.avgPrice).toLocaleString()} (${timeAgoText(w.avgPriceAt).replace(' 갱신', ' 전')})`);
+  if (ea.floorAvg) parts.push(`관측 하한 ${Math.round(ea.floorAvg).toLocaleString()} (최근 6h max(high)÷1.5 — 천장은 이보다 낮을 수 없음)`);
+  if (ea.recalib) parts.push('⏰ 게임 평균을 한 번 입력하면 정확해져요.');
+  return parts.join(String.fromCharCode(10));
+}
+
+function ceilingOf(w) {
+  const { avg } = effectiveAvg(w);
+  return avg > 0 ? Math.round(avg * CEILING_MULT) : null;
+}
 
 // 최저가 / 천장 (%) — 100 이면 천장, 50 이면 천장의 절반. 데이터 없으면 null.
 function bandPosPct(w) {
@@ -4241,22 +4332,19 @@ function bandPosPct(w) {
   return w.price / c * 100;
 }
 
-function avgIsStale(w) { return !w.avgPriceAt || (Date.now() - w.avgPriceAt) > AVG_STALE_MS; }
+function avgIsStale(w) { return effectiveAvg(w).recalib; }
 
-// 캐시된 시세이력으로 72시간 평균을 어림한다 — 입력칸의 힌트로만 쓴다(정답이 아니다).
-function estimateAvgFromHistory(kindId) {
-  const kindCache = historyCacheByKind[kindId];
-  if (!kindCache) return null;
-  const entries = Object.values(kindCache).filter(e => e && e.histData && e.histData.points && e.histData.points.length);
-  if (!entries.length) return null;
-  const cutoff = Date.now() - 72 * 60 * 60 * 1000;
-  let best = [];
-  for (const e of entries) {
-    const arr = e.histData.points.filter(p => p.close != null && p.time && new Date(p.time).getTime() >= cutoff).map(p => p.close);
-    if (arr.length > best.length) best = arr;
-  }
-  if (best.length < 3) return null;
-  return best.reduce((a, b) => a + b, 0) / best.length;
+// 감시 아이템의 추정에 쓸 7일(1시간봉) 이력이 없거나 1시간 넘게 오래됐으면 받아둔다.
+// daysSel 이 1일(10분봉)이면 72시간을 못 채우므로 여기서 따로 채운다. 요청은 큐가 속도를 맞춘다.
+async function ensureEstimateHistory(kindId, name) {
+  const kindCache = historyCacheByKind[kindId] || (historyCacheByKind[kindId] = {});
+  const cur = kindCache['7'];
+  if (cur && (Date.now() - cur.ts) < 60 * 60 * 1000) return;
+  try {
+    const histData = await fetchHistoryData(kindId, 7);
+    kindCache['7'] = { histData, ts: Date.now() };
+    touchHistoryCacheLRU(kindId);
+  } catch (e) { /* 다음 주기에 재시도 */ }
 }
 
 // 되사기: 내가 S 에 팔았으면 손에 0.85S. 지금 B 에 되사면 이득 = 0.85S − B.
@@ -4270,16 +4358,17 @@ function computeBandBadge(w) {
   const pos = bandPosPct(w);
   if (pos === null) return null;
   const c = ceilingOf(w);
-  const stale = avgIsStale(w);
+  const ea = effectiveAvg(w);
+  const stale = ea.recalib;
   let label, color;
   if (pos >= (w.sellHighPct || 90))      { label = '천장 근접 · 팔 때'; color = 'var(--down)'; }
   else if (pos <= (w.buyLowPct || 60))   { label = '천장 대비 싸다 · 살 때'; color = 'var(--up)'; }
   else                                    { label = '중간'; color = 'var(--dim)'; }
   const lines = [
     `천장(평균×1.5) ${c.toLocaleString()} 기준으로 지금 최저가 ${w.price.toLocaleString()} 은 ${pos.toFixed(1)}% 위치예요.`,
-    `팔 때 기준 ${w.sellHighPct || 90}% 이상 · 살 때 기준 ${w.buyLowPct || 60}% 이하 (아이템별로 조절 가능)`,
+    `평균 ${Math.round(ea.avg).toLocaleString()} (${ea.source}) · 팔 때 ${w.sellHighPct || 90}% 이상 · 살 때 ${w.buyLowPct || 60}% 이하`,
   ];
-  if (stale) lines.push('⏰ 평균가를 입력한 지 12시간이 넘었어요 — 게임에서 다시 확인해 주세요.');
+  if (stale) lines.push('⏰ 게임의 평균 판매가를 한 번 입력해 주세요 — 추정을 보정합니다. (미보정 추정은 최대 15% 틀릴 수 있어요)');
   return {
     pos, ceiling: c, stale,
     text: `천장의 ${pos.toFixed(0)}% · ${label}` + (stale ? ' ⏰' : ''),
@@ -4399,12 +4488,8 @@ function patchWatchItemDisplay(kindId) {
     const c = ceilingOf(w);
     ceilEl.innerHTML = c ? `천장 <b style="color:var(--text);">${c.toLocaleString()}</b>` : '천장 —';
   }
-  const ageEl = document.getElementById(`wAvgAge_${kindId}`);
-  if (ageEl) {
-    const stale = avgIsStale(w);
-    ageEl.textContent = w.avgPriceAt ? (stale ? '⏰ ' : '') + timeAgoText(w.avgPriceAt).replace(' 갱신', ' 입력') : '';
-    ageEl.style.color = (stale && w.avgPrice) ? 'var(--down)' : 'var(--dim)';
-  }
+  const avgEl = document.getElementById(`wAvg_${kindId}`);
+  if (avgEl) { avgEl.innerHTML = avgLine(w); avgEl.title = avgTitle(w); }
   const rbEl = document.getElementById(`wRebuy_${kindId}`);
   if (rbEl) {
     const rb = rebuyInfo(w);
@@ -4444,7 +4529,6 @@ function renderWatchList() {
     const depleteBadgeTxt = computeDepletionBadgeText(w);
     const bandBadge = computeBandBadge(w);
     const rb = rebuyInfo(w);
-    const avgHint = estimateAvgFromHistory(w.kind_id);
     const suggestedPct = computeSuggestedThresholdPct(w.kind_id);
     const suggestedTitle = suggestedPct !== null ? `변동성 기반 추천값: ${suggestedPct}%` : '추천값을 계산하려면 먼저 [조회]로 시세이력을 불러오세요';
     const confirmOptions = (selected) => [1, 2, 3].map(n => `<option value="${n}"${n === (selected || 1) ? ' selected' : ''}>${n}회</option>`).join('');
@@ -4458,10 +4542,9 @@ function renderWatchList() {
           <span class="alert-hit" id="wFired_${w.kind_id}" style="display:${firedCount ? 'inline' : 'none'};">${firedCount ? `🔔 ${firedCount}` : ''}</span>
         </div>
         <div class="watch-item-extra" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
-          <span title="게임에서 보이는 평균 판매가를 입력하세요 — 12시간마다 갱신됩니다">평균가</span>
-          <input type="number" min="0" step="any" value="${w.avgPrice || ''}" placeholder="${avgHint ? '추정 ≈ ' + Math.round(avgHint).toLocaleString() : '게임에서 확인'}" style="width:96px; padding:3px 6px; font-size:11.5px;" onchange="setAvgPrice(${w.kind_id}, this.value)" title="${avgHint ? 'API 추정치는 최대 15% 틀립니다 — 게임 값을 입력하세요' : ''}">
+          <span id="wAvg_${w.kind_id}" title="${escHtml(avgTitle(w))}">${avgLine(w)}</span>
+          <input type="number" min="0" step="any" value="" placeholder="게임 평균 입력→보정" style="width:118px; padding:3px 6px; font-size:11.5px;" onchange="setAvgPrice(${w.kind_id}, this.value); this.value='';" title="게임에서 보이는 '평균 판매가'를 넣으면 이 아이템의 추정 오차를 학습해요. 한 번이면 되고, ⏰ 가 뜨면 다시 한 번.">
           <span id="wCeil_${w.kind_id}">${ceilingOf(w) ? `천장 <b style="color:var(--text);">${ceilingOf(w).toLocaleString()}</b>` : '천장 —'}</span>
-          <span id="wAvgAge_${w.kind_id}" style="color:${avgIsStale(w) && w.avgPrice ? 'var(--down)' : 'var(--dim)'};">${w.avgPriceAt ? (avgIsStale(w) ? '⏰ ' : '') + timeAgoText(w.avgPriceAt).replace(' 갱신', ' 입력') : ''}</span>
           <span id="wRebuy_${w.kind_id}" style="color:${rb ? (rb.profit > 0 ? 'var(--up)' : 'var(--dim)') : 'var(--dim)'};">${rb ? `되사기 ${rb.profit > 0 ? '+' : ''}${Math.round(rb.profit).toLocaleString()}/개` : ''}</span>
         </div>
         <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">

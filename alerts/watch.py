@@ -120,6 +120,88 @@ def fetch_prices(pool, name):
     return last_status, None
 
 
+def fetch_history(pool, kind_id, days=7):
+    """시세이력(OHLC + 수량 OHLC). 평균가 추정용. 키 로테이션은 fetch_prices 와 같다."""
+    url = f"{BASE_URL}/market/prices/history?kind_id={kind_id}&days={days}"
+    attempts = max(1, len(pool.alive()))
+    for _ in range(attempts):
+        key = pool.take()
+        if key is None:
+            break
+        status, body = _request(url, headers={"Accept": "application/json",
+                                              "Authorization": "Bearer " + key})
+        if status == 401:
+            pool.dead.add(key)
+            continue
+        if status == 429:
+            time.sleep(1)
+            continue
+        if status != 200 or not isinstance(body, dict):
+            return None
+        return body.get("points") or []
+    return None
+
+
+# ---------------------------------------------------------------- 평균가 추정 (index.html effectiveAvg 와 같은 규약)
+
+# 게임 평균은 API 로 정확히 재현되지 않는다(체결가 vs 최저 매물, 아이템별 최대 15% 차이).
+# 세 겹: ① 72h 종가를 팔린 수량으로 가중 평균 ② 사용자가 입력해 둔 보정 계수를 곱한다
+# ③ 최근 6h max(high)/1.5 는 평균의 확실한 하한이라 그 밑이면 끌어올린다.
+# ★ 이 세 상수와 우선순위는 index.html 과 반드시 같아야 한다 — 화면과 카톡이 다른 천장을
+#   말하면 안 된다. 바꿀 때는 양쪽을 같이 바꾸고 test_rules [13] 을 갱신한다.
+EST_WINDOW_H = 72
+EST_FLOOR_WINDOW_H = 6
+EST_MIN_POINTS = 6
+CEILING_MULT = 1.5
+AVG_STALE_SEC = 12 * 3600
+RATIO_STALE_SEC = 7 * 24 * 3600
+
+
+def _ts(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+
+
+def estimate_avg(points, now_ts):
+    """(추정 평균, 관측 하한, 표본 수). 부족하면 (None, None, n)."""
+    t0 = now_ts - EST_WINDOW_H * 3600
+    tf = now_ts - EST_FLOOR_WINDOW_H * 3600
+    win = [p for p in (points or []) if p.get("close") is not None and p.get("time") and _ts(p["time"]) >= t0]
+    if len(win) < EST_MIN_POINTS:
+        return None, None, len(win)
+    wsum = psum = 0.0
+    for p in win:
+        sold = max(0, (p.get("count_open") or 0) - (p.get("count_close") or 0))
+        wsum += sold
+        psum += p["close"] * sold
+    est = psum / wsum if wsum > 0 else sum(p["close"] for p in win) / len(win)
+    recent = [p["high"] for p in win if p.get("high") is not None and _ts(p["time"]) >= tf]
+    floor_avg = (max(recent) / CEILING_MULT) if recent else None
+    return est, floor_avg, len(win)
+
+
+def effective_avg(w, est, floor_avg, now_ts):
+    """우선순위: 12h 안 입력값 > 추정×계수 > 미보정 추정 > 옛 입력. 하한은 항상 적용.
+    반환 (avg, source, recalib). avg 가 None 이면 천장 신호를 낼 수 없다."""
+    typed = w.get("avgPrice")
+    typed_at = (w.get("avgPriceAt") or 0) / 1000.0  # ms → s
+    ratio = w.get("avgRatio")
+    ratio_at = (w.get("avgRatioAt") or 0) / 1000.0
+    avg = None; source = None; recalib = False
+    if typed and typed > 0 and typed_at and (now_ts - typed_at) <= AVG_STALE_SEC:
+        avg, source = typed, "입력"
+    elif est and ratio and ratio > 0:
+        avg, source = est * ratio, "보정"
+        if not ratio_at or (now_ts - ratio_at) > RATIO_STALE_SEC:
+            recalib = True
+    elif est:
+        avg, source, recalib = est, "미보정", True
+    elif typed and typed > 0:
+        avg, source, recalib = typed, "옛입력", True
+    if avg is not None and floor_avg and floor_avg > avg * 1.001:
+        avg, source, recalib = floor_avg, source + "·하한", True
+    return avg, source, recalib
+
+
 # ---------------------------------------------------------------- 카카오
 
 def kakao_access_token(rest_key, refresh_token):
@@ -334,9 +416,11 @@ def evaluate(item, prev, w, alerts):
     # ── 천장 기준 신호 (v2) — index.html 의 bandPosPct / rebuyInfo 와 같은 규약 ──
     # 판매가 상한 = 3일 평균 x 1.5 (소유자 실측). 평균가는 사람이 앱에 입력해 settings.json 으로
     # 넘어온다. 한 번 울리면 기준에서 10%p 벗어나야 재무장한다 (경계선 진동 방지).
-    avg = w.get("avgPrice")
+    # main() 이 추정·보정·하한을 거친 유효 평균을 avgPrice_effective 로 넣어 준다.
+    # (직접 호출하는 테스트는 avgPrice 만 줘도 된다.)
+    avg = w.get("avgPrice_effective") if w.get("avgPrice_effective") else w.get("avgPrice")
     if avg and avg > 0 and price is not None:
-        ceiling = round(avg * 1.5)
+        ceiling = round(avg * CEILING_MULT)
         pos = price / ceiling * 100
         if w.get("sellHighAlert"):
             th = w.get("sellHighPct") or 90
@@ -459,7 +543,19 @@ def main():
 
         key = str(kind_id)
         prev = items_state.get(key) or {}
-        msgs, new_state = evaluate(found, prev, w, alerts_by_kind.get(key) or [])
+        w_eff = dict(w)
+        if w.get("sellHighAlert") or w.get("buyLowAlert"):
+            # 천장 신호가 켜진 아이템만 이력을 한 번 더 받는다 (아이템당 요청 +1).
+            time.sleep(REQUEST_GAP_SEC)
+            pts = fetch_history(pool, kind_id, 7)
+            est, floor_avg, n = estimate_avg(pts, now)
+            avg, source, recalib = effective_avg(w, est, floor_avg, now)
+            if avg:
+                w_eff["avgPrice_effective"] = avg
+                log(f"  · {w['name']}: 평균 {avg:,.1f} ({source}{' ⏰' if recalib else ''}) 천장 {round(avg * CEILING_MULT):,} · 표본 {n}")
+            else:
+                log(f"  · {w['name']}: 평균가 없음(이력 {n}개) — 천장 신호 건너뜀")
+        msgs, new_state = evaluate(found, prev, w_eff, alerts_by_kind.get(key) or [])
         items_state[key] = new_state
         if msgs:
             pending.append((key, w["name"], msgs))

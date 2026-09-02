@@ -89,3 +89,38 @@ jobs:
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             alerts-state
           echo "상태를 alerts-state 브랜치에 저장했습니다."
+
+      # ── 서버가 배운 보정 계수만 main 에 발행한다 ──
+      # state.json 과 달리 이 파일은 브라우저(index.html 의 pullAvgFromServer)가 직접 읽어야
+      # 하고, 브라우저가 읽을 수 있는 곳은 Pages 가 서비스하는 main 뿐이다. 이게 없으면
+      # 아무도 탭을 안 켜둔 사이에 지나간 품귀를 서버만 알게 되고, 화면과 카톡이 서로 다른
+      # 천장을 말한다.
+      # 위 "상태는 main 에 커밋하지 않는다" 원칙에서 이 파일만 예외로 두는 근거: 계수는
+      # plateau 가 5% 이상 달라질 때만 갱신되므로 10분마다가 아니라 며칠에 한 번 수준으로
+      # 드물게 바뀐다. 그래서 "실제로 내용이 바뀌었을 때만" 커밋한다 — 안 바뀌면 재빌드도 없다.
+      - name: 학습 계수 발행
+        if: always()
+        run: |
+          test -f alerts/learned.json || { echo "학습 계수 파일 없음 — 발행 생략"; exit 0; }
+          # 처음엔 추적되지 않는 파일(??)이라 git diff 로는 안 잡힌다 — status 로 본다.
+          if [ -z "$(git status --porcelain -- alerts/learned.json)" ]; then
+            echo "학습 계수 변화 없음 — 발행 생략"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add alerts/learned.json
+          git commit -q -m "chore(alerts): 학습 보정 계수 갱신"
+          # 앱이 같은 시각에 settings.json 을 올리면 push 가 밀린다(서로 다른 파일이라 충돌은
+          # 안 난다). 그때만 원격을 받아 다시 얹고 재시도한다.
+          for i in 1 2 3; do
+            if git push -q origin HEAD:main; then
+              echo "학습 계수를 main 에 발행했습니다."
+              exit 0
+            fi
+            echo "다른 커밋에 밀렸습니다 — 원격을 받아 다시 얹습니다 ($i/3)"
+            git fetch -q origin main || break
+            git rebase -q origin/main || { git rebase --abort || true; break; }
+          done
+          # 발행 실패가 감시 자체를 실패로 만들면 안 된다 — 계수는 다음 실행에서 다시 올라간다.
+          echo "⚠ 학습 계수 발행 실패 — 다음 실행에서 재시도합니다."

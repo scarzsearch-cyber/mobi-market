@@ -860,18 +860,32 @@ function openSettingsOnGithub() {
 // 영원히 안 나타난다 — 감시 목록 자체는 같아도 "천장근접 %"가 기기마다 다르게 보이는 원인.
 // watch.py의 pick_ratio()와 같은 규약(더 최근 타임스탬프가 이긴다)으로 이 두 값만 당겨온다.
 // 감시 목록 구성·알림 on/off처럼 시각(timestamp)이 없는 값은 우열을 가릴 수 없으니 그대로 둔다.
-function pullAvgFromServer(remote) {
+// 두 번째 인자 learned 는 서버(watch.py)가 스스로 배운 계수 — alerts/learned.json.
+// settings.json 에 실리는 계수는 "어느 기기의 브라우저가 배웠거나 사람이 입력한 값"이고,
+// 이건 "탭이 하나도 안 켜져 있을 때 서버가 혼자 잡은 값"이다. 둘 다 후보로 놓고 규약은
+// 똑같이 적용한다 — 더 최근 타임스탬프가 이긴다(watch.py 의 pick_ratio 와 같은 규약).
+function pullAvgFromServer(remote, learned) {
   const byId = new Map(((remote && remote.watchList) || []).map(r => [r.kind_id, r]));
   const touched = [];
   watchList.forEach(w => {
     const r = byId.get(w.kind_id);
-    if (!r) return;
-    if (r.avgPrice > 0 && (r.avgPriceAt || 0) > (w.avgPriceAt || 0)) {
+    // 서버 학습 계수는 kind_id 를 문자열 키로 쓴다(JSON 객체라서).
+    const sv = learned ? learned[String(w.kind_id)] : null;
+    if (!r && !sv) return;
+    if (r && r.avgPrice > 0 && (r.avgPriceAt || 0) > (w.avgPriceAt || 0)) {
       w.avgPrice = r.avgPrice; w.avgPriceAt = r.avgPriceAt;
       if (!touched.includes(w.kind_id)) touched.push(w.kind_id);
     }
-    if (r.avgRatio > 0 && (r.avgRatioAt || 0) > (w.avgRatioAt || 0)) {
-      w.avgRatio = r.avgRatio; w.avgRatioAt = r.avgRatioAt; w.avgRatioSrc = r.avgRatioSrc || 'auto';
+    // 계수 후보 셋(내 것 / settings.json / 서버 학습) 중 가장 최근 것.
+    let bestRatio = null, bestAt = w.avgRatioAt || 0, bestSrc = w.avgRatioSrc;
+    if (r && r.avgRatio > 0 && (r.avgRatioAt || 0) > bestAt) {
+      bestRatio = r.avgRatio; bestAt = r.avgRatioAt; bestSrc = r.avgRatioSrc || 'auto';
+    }
+    if (sv && sv.ratio > 0 && (sv.ratioAt || 0) > bestAt) {
+      bestRatio = sv.ratio; bestAt = sv.ratioAt; bestSrc = sv.src || 'auto';
+    }
+    if (bestRatio !== null) {
+      w.avgRatio = bestRatio; w.avgRatioAt = bestAt; w.avgRatioSrc = bestSrc;
       if (!touched.includes(w.kind_id)) touched.push(w.kind_id);
     }
   });
@@ -892,7 +906,14 @@ async function checkSettingsDrift() {
         msg: '서버에 설정 파일이 아직 없어요 — 서버 감시가 아무것도 안 보고 있습니다.' };
     } else {
       const remote = await res.json();
-      pullAvgFromServer(remote);
+      // 서버가 스스로 배운 계수도 같이 읽는다. 아직 한 번도 학습이 없었으면 파일이 없는 게
+      // 정상이라 조용히 넘어간다 — 이것 때문에 설정 확인이 실패하면 안 된다.
+      let learned = null;
+      try {
+        const lr = await fetch('alerts/learned.json?cb=' + Date.now());
+        if (lr.ok) learned = await lr.json();
+      } catch (e) { /* 없으면 없는 대로 — settings.json 쪽 계수만 쓴다 */ }
+      pullAvgFromServer(remote, learned);
       const mine = watchList.map(w => w.name).sort();
       const theirs = ((remote && remote.watchList) || []).map(w => w.name).sort();
       settingsSyncState = JSON.stringify(mine) === JSON.stringify(theirs)

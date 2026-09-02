@@ -7,8 +7,9 @@
 | 파일 | 역할 |
 |---|---|
 | `watch.py` | 감시·판정·전송 |
-| `settings.json` | **직접 올려야 함** — 앱에서 내보낸 설정 파일 |
+| `settings.json` | 앱이 자동으로 올린다(토큰 없으면 직접 올림) — 감시 목록·임계값 |
 | `state.json` | 봇이 만든다. `alerts-state` 브랜치에만 존재(main 엔 없음) |
+| `learned.json` | 봇이 만든다. **이것만 main 에 올라간다** — 화면이 읽어야 하므로 |
 | `../.github/workflows/alerts.yml` | 10분마다 실행 |
 
 ---
@@ -96,6 +97,13 @@ Actions 탭 → "가격 알림 감시" → **Run workflow** 로 수동 실행.
 계수와는 더 최근 것을 쓴다. 최근 6h `max(high)÷1.5` 하한을 항상 적용한다.
 규약은 `index.html` 의 `effectiveAvg` 와 같고 `test_rules.py` [13][14] 가 같은 픽스처로 검증한다.
 로그에 `평균 31.3 (자동) 천장 47` 처럼 출처가 찍힌다.
+
+그렇게 배운 계수는 `learned.json` 으로 **main 에 발행**된다(내용이 실제로 바뀔 때만 커밋).
+`state.json` 은 `alerts-state` 브랜치에 있어 Pages 가 서비스하지 않으므로, 이 파일이 없으면
+**아무도 탭을 안 켜둔 사이에 지나간 품귀를 서버만 알게 되고 화면과 카톡이 서로 다른 천장을 말한다**
+(브라우저는 plateau 창 12h 이 지나면 그 국면을 다시 잡을 수 없다). `index.html` 의
+`pullAvgFromServer` 가 settings.json 과 이 파일을 같이 읽어 **더 최근 계수**를 쓴다.
+시각 단위가 다르니 주의 — `state.json` 은 초, 화면과 `learned.json` 은 밀리초다(`test_rules.py` [16]).
 
 ---
 

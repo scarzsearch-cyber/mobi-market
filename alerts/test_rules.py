@@ -244,6 +244,31 @@ check("sellHighAlert 키 없음 → 93% 에 울림", len(msgs), 1)
 msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, {**w15, "sellHighAlert": False}, [])
 check("명시적 False 면 안 울림", len(msgs), 0)
 
+print("")
+print("[16] 학습 계수 발행 — 브라우저가 읽을 learned.json")
+# 서버가 배운 계수를 화면도 쓸 수 있게 main 에 내보내는 파일. 단위 변환이 핵심이다:
+# state.json 은 초, index.html 의 avgRatioAt 은 밀리초 — 여기서 안 맞추면 브라우저의
+# "더 최근 것이 이긴다" 비교가 서버 값을 항상 옛것으로 보고 무시한다(1000배 차이).
+import json as _json
+import tempfile as _tempfile
+
+_tmp = _tempfile.mkdtemp()
+watch.LEARNED_PATH = os.path.join(_tmp, "learned.json")
+pub = watch.save_learned({
+    "111": {"learned": {"ratio": 0.97, "ratioAt": 1788000000, "src": "auto"}},
+    "222": {"learned": {"ratio": 1.05, "ratioAt": 1788000600}},   # src 없으면 auto 로 채움
+    "333": {"fired": {}},                                          # 학습한 적 없음 → 빠져야 함
+    "444": {"learned": {"ratio": 0, "ratioAt": 1788000000}},       # 0 은 계수가 아님 → 빠져야 함
+    "555": {"learned": {"ratio": 1.1}},                            # 시각 없음 → 비교 불가라 빠져야 함
+})
+check("학습한 것만 실린다", sorted(pub.keys()), ["111", "222"])
+check("초 → 밀리초로 바뀐다", pub["111"]["ratioAt"], 1788000000000)
+check("계수 값은 그대로", pub["111"]["ratio"], 0.97)
+check("src 기본값 auto", pub["222"]["src"], "auto")
+with io.open(watch.LEARNED_PATH, encoding="utf-8") as _f:
+    check("파일로도 같은 내용이 써진다", _json.load(_f), pub)
+check("학습이 하나도 없으면 빈 객체", watch.save_learned({"1": {"fired": {}}}), {})
+
 print("\n" + ("─" * 50))
 print("❌ 실패 " + str(len(fails)) + "건: " + ", ".join(fails) if fails else "✅ 전부 통과")
 sys.exit(1 if fails else 0)

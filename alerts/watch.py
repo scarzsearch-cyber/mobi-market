@@ -32,6 +32,8 @@ KST = timezone(timedelta(hours=9))
 HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(HERE, "settings.json")
 STATE_PATH = os.path.join(HERE, "state.json")
+# state.json 과 달리 이 파일만 main 에 올라간다 — 브라우저가 읽어야 하기 때문. save_learned() 참고.
+LEARNED_PATH = os.path.join(HERE, "learned.json")
 
 # 서버 한도는 분당 30회. 여유를 두고 요청 사이에 간격을 준다(index.html 의 API_CALL_GAP_MS 와 같은 취지).
 REQUEST_GAP_SEC = 2.5
@@ -345,6 +347,29 @@ def save_state(state):
         json.dump(state, f, ensure_ascii=False, indent=1, sort_keys=True)
 
 
+def save_learned(items_state):
+    """서버가 스스로 배운 보정 계수를, 브라우저가 읽을 수 있는 자리에 따로 남긴다.
+
+    ★ 왜 필요한가: state.json 은 alerts-state 브랜치에만 있어서 Pages 로 서비스되지 않는다.
+      그래서 지금까지 서버가 배운 계수는 카톡 알림에만 반영되고 화면은 영영 몰랐다.
+      아무도 탭을 안 켜둔 사이에 품귀가 지나가면, 브라우저는 12시간(EST_PLATEAU_WINDOW_H)이
+      지난 뒤엔 그 plateau 를 다시 잡을 수 없어서 화면과 카톡이 서로 다른 천장을 말하게 된다.
+      이 파일이 그 구멍을 메운다 — main 에 올라가고 index.html 의 pullAvgFromServer 가 읽는다.
+
+    ★ 시각 단위 주의: state.json 의 ratioAt 은 초, index.html 의 avgRatioAt 은 밀리초다.
+      브라우저가 자기 값과 그대로 비교(더 최근 것이 이긴다)할 수 있게 밀리초로 바꿔서 내보낸다.
+    """
+    out = {}
+    for key, st in (items_state or {}).items():
+        lr = (st or {}).get("learned") or {}
+        ratio, at = lr.get("ratio"), lr.get("ratioAt")
+        if ratio and ratio > 0 and at:
+            out[str(key)] = {"ratio": ratio, "ratioAt": int(at * 1000), "src": lr.get("src") or "auto"}
+    with open(LEARNED_PATH, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=1, sort_keys=True)
+    return out
+
+
 def in_quiet_hours(quiet, now_kst):
     """index.html 의 isQuietHours() 와 같은 규약 — 자정을 넘는 구간도 처리한다."""
     if not quiet or not quiet.get("enabled"):
@@ -654,6 +679,9 @@ def main():
     state["lastSentAt"] = sent_state
     state["lastRunAt"] = now_kst.isoformat(timespec="seconds")
     save_state(state)
+    learned_pub = save_learned(items_state)  # 화면도 같은 천장을 말하도록 main 에 발행
+    if learned_pub:
+        log(f"학습 계수 {len(learned_pub)}개를 learned.json 에 남겼습니다 (바뀐 게 있을 때만 커밋됩니다).")
 
     log(f"완료 — 조건 충족 {len(pending)}개 · 전송 {sent_count}건 · 조회 실패 {api_failures}건")
     if token_note:

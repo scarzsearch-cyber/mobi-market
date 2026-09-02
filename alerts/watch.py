@@ -145,29 +145,40 @@ def fetch_history(pool, kind_id, days=7):
 # ---------------------------------------------------------------- 평균가 추정 (index.html effectiveAvg 와 같은 규약)
 
 # 게임 평균은 API 로 정확히 재현되지 않는다(체결가 vs 최저 매물, 아이템별 최대 15% 차이).
-# 세 겹: ① 72h 종가를 팔린 수량으로 가중 평균 ② 사용자가 입력해 둔 보정 계수를 곱한다
-# ③ 최근 6h max(high)/1.5 는 평균의 확실한 하한이라 그 밑이면 끌어올린다.
-# ★ 이 세 상수와 우선순위는 index.html 과 반드시 같아야 한다 — 화면과 카톡이 다른 천장을
+# 네 겹: ① 72h 종가를 팔린 수량으로 가중 평균 ② plateau 자동보정 — 최근 12h max(high) 에
+# 3캔들 이상 머물렀고 그 시간대 수량이 창 중앙값의 절반 이하(=정말 말랐다)이며 역산 평균이
+# 추정의 0.75~1.3 배 안이면 그 값을 평균으로 채택하고 계수를 학습 ③ 저장된 보정 계수를 곱한다
+# ④ 최근 6h max(high)/1.5 는 평균의 확실한 하한이라 그 밑이면 끌어올린다.
+# ★ 상수·우선순위·판정식은 index.html 과 반드시 같아야 한다 — 화면과 카톡이 다른 천장을
 #   말하면 안 된다. 바꿀 때는 양쪽을 같이 바꾸고 test_rules [13] 을 갱신한다.
 EST_WINDOW_H = 72
 EST_FLOOR_WINDOW_H = 6
+EST_PLATEAU_WINDOW_H = 12
 EST_MIN_POINTS = 6
+PLATEAU_MIN_CANDLES = 3
+PLATEAU_COUNT_RATIO_MAX = 0.5
+PLATEAU_BAND = (0.75, 1.3)
 CEILING_MULT = 1.5
 AVG_STALE_SEC = 12 * 3600
-RATIO_STALE_SEC = 7 * 24 * 3600
 
 
 def _ts(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
 
 
+def _median(xs):
+    import statistics
+    return statistics.median(xs) if xs else None
+
+
 def estimate_avg(points, now_ts):
-    """(추정 평균, 관측 하한, 표본 수). 부족하면 (None, None, n)."""
+    """(추정 평균, 관측 하한, plateau 평균, 표본 수). 부족하면 (None, None, None, n)."""
     t0 = now_ts - EST_WINDOW_H * 3600
     tf = now_ts - EST_FLOOR_WINDOW_H * 3600
+    tp = now_ts - EST_PLATEAU_WINDOW_H * 3600
     win = [p for p in (points or []) if p.get("close") is not None and p.get("time") and _ts(p["time"]) >= t0]
     if len(win) < EST_MIN_POINTS:
-        return None, None, len(win)
+        return None, None, None, len(win)
     wsum = psum = 0.0
     for p in win:
         sold = max(0, (p.get("count_open") or 0) - (p.get("count_close") or 0))
@@ -176,23 +187,46 @@ def estimate_avg(points, now_ts):
     est = psum / wsum if wsum > 0 else sum(p["close"] for p in win) / len(win)
     recent = [p["high"] for p in win if p.get("high") is not None and _ts(p["time"]) >= tf]
     floor_avg = (max(recent) / CEILING_MULT) if recent else None
-    return est, floor_avg, len(win)
+    plateau_avg = None
+    pw = [p for p in win if p.get("high") is not None and _ts(p["time"]) >= tp]
+    if len(pw) >= EST_MIN_POINTS:
+        mx = max(p["high"] for p in pw)
+        plat = [p for p in pw if p["high"] == mx]
+        med_all = _median([p["count_close"] for p in pw if p.get("count_close") is not None])
+        med_plat = _median([p["count_close"] for p in plat if p.get("count_close") is not None])
+        implied = mx / CEILING_MULT
+        if (len(plat) >= PLATEAU_MIN_CANDLES and med_all and med_plat is not None
+                and med_plat / med_all <= PLATEAU_COUNT_RATIO_MAX
+                and est > 0 and PLATEAU_BAND[0] <= implied / est <= PLATEAU_BAND[1]):
+            plateau_avg = implied
+    return est, floor_avg, plateau_avg, len(win)
 
 
-def effective_avg(w, est, floor_avg, now_ts):
-    """우선순위: 12h 안 입력값 > 추정×계수 > 미보정 추정 > 옛 입력. 하한은 항상 적용.
-    반환 (avg, source, recalib). avg 가 None 이면 천장 신호를 낼 수 없다."""
+def pick_ratio(w, learned):
+    """settings.json 의 계수(사람 입력 또는 앱의 자동 학습)와 state.json 의 서버 학습 계수 중 더 최근 것."""
+    cands = []
+    if w.get("avgRatio") and w["avgRatio"] > 0:
+        cands.append(((w.get("avgRatioAt") or 0) / 1000.0, w["avgRatio"]))
+    if learned and learned.get("ratio") and learned["ratio"] > 0:
+        cands.append((learned.get("ratioAt") or 0, learned["ratio"]))
+    if not cands:
+        return None
+    return max(cands)[1]
+
+
+def effective_avg(w, est, floor_avg, plateau_avg, now_ts, learned=None):
+    """우선순위: 12h 안 입력값 > plateau 자동보정 > 추정×계수 > 미보정 추정 > 옛 입력. 하한은 항상.
+    반환 (avg, source, recalib). recalib 는 근거가 약할 때(미보정·하한)만 True."""
     typed = w.get("avgPrice")
-    typed_at = (w.get("avgPriceAt") or 0) / 1000.0  # ms → s
-    ratio = w.get("avgRatio")
-    ratio_at = (w.get("avgRatioAt") or 0) / 1000.0
+    typed_at = (w.get("avgPriceAt") or 0) / 1000.0
+    ratio = pick_ratio(w, learned)
     avg = None; source = None; recalib = False
     if typed and typed > 0 and typed_at and (now_ts - typed_at) <= AVG_STALE_SEC:
         avg, source = typed, "입력"
-    elif est and ratio and ratio > 0:
+    elif plateau_avg:
+        avg, source = plateau_avg, "자동"
+    elif est and ratio:
         avg, source = est * ratio, "보정"
-        if not ratio_at or (now_ts - ratio_at) > RATIO_STALE_SEC:
-            recalib = True
     elif est:
         avg, source, recalib = est, "미보정", True
     elif typed and typed > 0:
@@ -422,14 +456,14 @@ def evaluate(item, prev, w, alerts):
     if avg and avg > 0 and price is not None:
         ceiling = round(avg * CEILING_MULT)
         pos = price / ceiling * 100
-        if w.get("sellHighAlert"):
+        if w.get("sellHighAlert", True):  # 기본 켜짐(opt-out) — index.html 과 같다
             th = w.get("sellHighPct") or 90
             if pos >= th and not state["fired"].get("sellHigh"):
                 state["fired"]["sellHigh"] = True
                 msgs.append(f"🔴 {name} 최저가 {fmt(price)} = 천장({fmt(ceiling)})의 {pos:.0f}% — 물량이 말랐어요. 천장 근처에 걸어두면 팔릴 때예요")
             elif state["fired"].get("sellHigh") and pos < th - 10:
                 state["fired"].pop("sellHigh", None)
-        if w.get("buyLowAlert"):
+        if w.get("buyLowAlert", True):
             th = w.get("buyLowPct") or 60
             if pos <= th and not state["fired"].get("buyLow"):
                 state["fired"]["buyLow"] = True
@@ -544,18 +578,26 @@ def main():
         key = str(kind_id)
         prev = items_state.get(key) or {}
         w_eff = dict(w)
-        if w.get("sellHighAlert") or w.get("buyLowAlert"):
+        learned = prev.get("learned") or {}
+        if w.get("sellHighAlert", True) or w.get("buyLowAlert", True):
             # 천장 신호가 켜진 아이템만 이력을 한 번 더 받는다 (아이템당 요청 +1).
             time.sleep(REQUEST_GAP_SEC)
             pts = fetch_history(pool, kind_id, 7)
-            est, floor_avg, n = estimate_avg(pts, now)
-            avg, source, recalib = effective_avg(w, est, floor_avg, now)
+            est, floor_avg, plateau_avg, n = estimate_avg(pts, now)
+            if plateau_avg and est:
+                # plateau 가 잡히면 계수를 학습해 state 에 남긴다 — 물량이 풀려도 보정이 남는다.
+                r = plateau_avg / est
+                if not learned.get("ratio") or abs(r / learned["ratio"] - 1) >= 0.05:
+                    learned = {"ratio": r, "ratioAt": now, "src": "auto"}
+            avg, source, recalib = effective_avg(w, est, floor_avg, plateau_avg, now, learned)
             if avg:
                 w_eff["avgPrice_effective"] = avg
                 log(f"  · {w['name']}: 평균 {avg:,.1f} ({source}{' ⏰' if recalib else ''}) 천장 {round(avg * CEILING_MULT):,} · 표본 {n}")
             else:
                 log(f"  · {w['name']}: 평균가 없음(이력 {n}개) — 천장 신호 건너뜀")
         msgs, new_state = evaluate(found, prev, w_eff, alerts_by_kind.get(key) or [])
+        if learned:
+            new_state["learned"] = learned
         items_state[key] = new_state
         if msgs:
             pending.append((key, w["name"], msgs))

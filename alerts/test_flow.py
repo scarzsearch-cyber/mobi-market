@@ -38,6 +38,7 @@ def fresh(tmp, price=1000, count=10):
                                           "min_price": price, "total_count": count,
                                           "is_sold_out": False}])
     m.kakao_access_token = lambda r, t: ("fake-access", None, None)
+    m.fetch_history = lambda pool, kid, days=7: []   # 이력 없음 → 평균 없음 → 천장 신호 생략
     m.find_or_create_issue = lambda tok, repo: 42
     m.github_issue_notify = lambda tok, repo, owner, num, text, link: (sent.append((text, link)) or (True, 201))
 

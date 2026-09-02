@@ -620,10 +620,11 @@ function slimWatchItem(w) {
     listingDropPct: w.listingDropPct || 0,
     // 천장 기준 신호 (v2 전략): 평균가는 게임에서 읽어 사람이 입력한다 — API 로는 재현이 안 된다(오차 15%).
     avgPrice: (w.avgPrice > 0) ? w.avgPrice : null, avgPriceAt: w.avgPriceAt || null,
-    avgRatio: (w.avgRatio > 0) ? w.avgRatio : null, avgRatioAt: w.avgRatioAt || null,
+    avgRatio: (w.avgRatio > 0) ? w.avgRatio : null, avgRatioAt: w.avgRatioAt || null, avgRatioSrc: w.avgRatioSrc || null,
     mySellPrice: (w.mySellPrice > 0) ? w.mySellPrice : null,
-    sellHighAlert: !!w.sellHighAlert, sellHighPct: w.sellHighPct || 90,
-    buyLowAlert: !!w.buyLowAlert, buyLowPct: w.buyLowPct || 60,
+    // 기본 켜짐(opt-out): 이 도구의 존재 이유가 이 두 신호라, 새 아이템은 끄지 않는 한 켜져 있다.
+    sellHighAlert: w.sellHighAlert !== false, sellHighPct: w.sellHighPct || 90,
+    buyLowAlert: w.buyLowAlert !== false, buyLowPct: w.buyLowPct || 60,
     rebuyAlert: !!w.rebuyAlert,
   };
 }
@@ -641,10 +642,11 @@ function restoreWatchItem(w) {
     listingDropPct: w.listingDropPct || 0,
     // 천장 기준 신호 (v2 전략): 평균가는 게임에서 읽어 사람이 입력한다 — API 로는 재현이 안 된다(오차 15%).
     avgPrice: (w.avgPrice > 0) ? w.avgPrice : null, avgPriceAt: w.avgPriceAt || null,
-    avgRatio: (w.avgRatio > 0) ? w.avgRatio : null, avgRatioAt: w.avgRatioAt || null,
+    avgRatio: (w.avgRatio > 0) ? w.avgRatio : null, avgRatioAt: w.avgRatioAt || null, avgRatioSrc: w.avgRatioSrc || null,
     mySellPrice: (w.mySellPrice > 0) ? w.mySellPrice : null,
-    sellHighAlert: !!w.sellHighAlert, sellHighPct: w.sellHighPct || 90,
-    buyLowAlert: !!w.buyLowAlert, buyLowPct: w.buyLowPct || 60,
+    // 기본 켜짐(opt-out): 이 도구의 존재 이유가 이 두 신호라, 새 아이템은 끄지 않는 한 켜져 있다.
+    sellHighAlert: w.sellHighAlert !== false, sellHighPct: w.sellHighPct || 90,
+    buyLowAlert: w.buyLowAlert !== false, buyLowPct: w.buyLowPct || 60,
     rebuyAlert: !!w.rebuyAlert,
     depletionEtaMin: null,
   };
@@ -3520,8 +3522,8 @@ function setAvgPrice(kindId, val) {
     w.avgPrice = n; w.avgPriceAt = Date.now();
     // 보정 계수 학습: 게임 값 ÷ 지금 추정치. 추정이 없으면(이력 미수신) 계수는 다음 기회에.
     const { est } = estimateAvgFromHistory(kindId);
-    if (est > 0) { w.avgRatio = n / est; w.avgRatioAt = Date.now(); }
-  } else { w.avgPrice = null; w.avgPriceAt = null; w.avgRatio = null; w.avgRatioAt = null; }
+    if (est > 0) { w.avgRatio = n / est; w.avgRatioAt = Date.now(); w.avgRatioSrc = 'manual'; }
+  } else { w.avgPrice = null; w.avgPriceAt = null; w.avgRatio = null; w.avgRatioAt = null; w.avgRatioSrc = null; }
   w._sellHighFired = false; w._buyLowFired = false;
   saveWatchStateToStorage();
   patchWatchItemDisplay(kindId);
@@ -4007,6 +4009,7 @@ async function refreshWatchItem(w) {
 
     // 평균가 추정에 쓸 7일 이력 확보 (없거나 1시간 넘었을 때만 — 큐가 속도를 맞춘다)
     await ensureEstimateHistory(w.kind_id, w.name);
+    learnRatioFromPlateau(w); // 물량이 마른 순간을 잡으면 계수를 스스로 배운다
 
     // ── 천장 기준 신호 (v2) — 한 번 울리면 기준에서 10%p 벗어나야 재무장 (경계선 진동 방지) ──
     const bandPos = bandPosPct(w);
@@ -4241,37 +4244,48 @@ const SELL_FEE_PCT = 15; // 판매 수수료 — 제작 계산기·되사기 손
 const CEILING_MULT = 1.5;
 const AVG_STALE_MS = 12 * 60 * 60 * 1000; // 게임 갱신 주기 — 이보다 오래된 입력은 낡았다고 표시
 
-// ---- 평균가: 자동 추정 + 보정 계수 + 관측 하한 ----
+// ---- 평균가: 자동 추정 + 자동보정(plateau) + 보정 계수 + 관측 하한 ----
 // 게임 평균은 API 로 정확히 재현되지 않는다(체결가 vs 최저 매물, 아이템별 최대 15% 차이).
-// 그래서 세 겹으로 간다:
+// 그래서 네 겹으로 간다. 규약은 alerts/watch.py 와 반드시 같아야 한다(화면과 카톡이 같은 천장).
 //   ① 자동 추정: 최근 72시간 종가를 팔린 수량(count_open − count_close)으로 가중 평균.
-//      calibrate_avg.py 에서 24가지 중 가장 나았던 방법이다.
-//   ② 보정 계수: 사용자가 게임 평균을 한 번 입력하면 (입력값 ÷ 그때 추정치) 를 저장하고,
-//      그 뒤로는 추정치 × 계수를 쓴다. 차이가 아이템 고유 성질(호가 두께)이라 계수가
-//      비교적 안정적이라는 가정 — 틀리면 아래 ③이 잡아낸다.
-//   ③ 관측 하한: 최저가는 천장을 절대 못 넘으므로 최근 6시간 max(high) ÷ 1.5 는 평균의
-//      확실한 하한이다. 추정이 그보다 낮으면 하한으로 끌어올리고 "재보정 권장"을 띄운다.
-//      (plateau 를 천장으로 '단정'하지는 않는다 — 용비늘에서 큰 매물 하나가 7시간 눌러앉아
-//      가짜 plateau 를 만드는 걸 실측했다. 하한으로만 쓰면 언제나 안전하다.)
-// 우선순위: 12시간 안에 입력한 값 > 추정×계수 > 미보정 추정. 어느 쪽이든 하한은 적용.
+//   ② 자동보정(plateau): 물량이 마르면 최저가가 천장에 정확히 붙는다. 최근 12시간 max(high) 에
+//      3캔들 이상 머물렀고, 그 시간대 수량이 창 중앙값의 절반 이하이며(=정말 말랐다),
+//      역산 평균(max/1.5)이 추정의 0.75~1.3 배 안이면 그 값을 평균으로 채택하고 계수를 학습한다.
+//      실측: 파동 진짜 천장 47 채택 · 삼림/공명/용비늘 가짜 plateau 전부 기각 (calibrate_avg.py).
+//      수량 조건이 핵심이다 — 큰 매물 하나가 싸게 눌러앉은 가짜 plateau 는 수량이 평소와 같다.
+//   ③ 보정 계수: 사용자가 게임 평균을 입력하거나 ②가 잡힐 때 (평균 ÷ 추정) 을 저장해 두고
+//      다음부터 추정 × 계수를 쓴다.
+//   ④ 관측 하한: 최근 6시간 max(high) ÷ 1.5 는 평균의 확실한 하한. 추정이 그 밑이면 끌어올린다.
+// 우선순위: 12시간 안 입력 > 자동보정 > 추정×계수 > 미보정 추정 > 옛 입력. 하한은 항상 적용.
+// ⏰ 는 근거가 없을 때(미보정)나 하한에 걸렸을 때만 — 타이머로 재촉하지 않는다.
 const EST_WINDOW_H = 72;
 const EST_FLOOR_WINDOW_H = 6;
+const EST_PLATEAU_WINDOW_H = 12;
 const EST_MIN_POINTS = 6;
-const RATIO_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 이보다 오래된 계수는 "다시 한 번 입력" 권장
+const PLATEAU_MIN_CANDLES = 3;
+const PLATEAU_COUNT_RATIO_MAX = 0.5;
+const PLATEAU_BAND = [0.75, 1.3];
 
-// 캐시된 시세이력에서 72h 추정과 6h 관측 하한을 낸다. 부족하면 null 필드.
+function medianOf(arr) {
+  if (!arr.length) return null;
+  const a = arr.slice().sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+// { est, floorAvg, plateauAvg, n } — 부족하면 null 필드.
 function estimateAvgFromHistory(kindId) {
   const kindCache = historyCacheByKind[kindId];
-  if (!kindCache) return { est: null, floorAvg: null, n: 0 };
+  if (!kindCache) return { est: null, floorAvg: null, plateauAvg: null, n: 0 };
   const now = Date.now();
-  const t0 = now - EST_WINDOW_H * 3600000, tf = now - EST_FLOOR_WINDOW_H * 3600000;
+  const t0 = now - EST_WINDOW_H * 3600000, tf = now - EST_FLOOR_WINDOW_H * 3600000, tp = now - EST_PLATEAU_WINDOW_H * 3600000;
   let best = null;
   for (const e of Object.values(kindCache)) {
     const pts = (e && e.histData && e.histData.points) || [];
     const win = pts.filter(p => p.close != null && p.time && new Date(p.time).getTime() >= t0);
     if (!best || win.length > best.length) best = win;
   }
-  if (!best || best.length < EST_MIN_POINTS) return { est: null, floorAvg: null, n: best ? best.length : 0 };
+  if (!best || best.length < EST_MIN_POINTS) return { est: null, floorAvg: null, plateauAvg: null, n: best ? best.length : 0 };
   let wsum = 0, psum = 0;
   for (const p of best) {
     const sold = Math.max(0, (p.count_open || 0) - (p.count_close || 0));
@@ -4280,43 +4294,68 @@ function estimateAvgFromHistory(kindId) {
   const est = wsum > 0 ? psum / wsum : best.reduce((a, p) => a + p.close, 0) / best.length;
   const recent = best.filter(p => p.high != null && new Date(p.time).getTime() >= tf);
   const floorAvg = recent.length ? Math.max(...recent.map(p => p.high)) / CEILING_MULT : null;
-  return { est, floorAvg, n: best.length };
+  // plateau 자동보정
+  let plateauAvg = null;
+  const pw = best.filter(p => p.high != null && new Date(p.time).getTime() >= tp);
+  if (pw.length >= EST_MIN_POINTS) {
+    const mx = Math.max(...pw.map(p => p.high));
+    const plat = pw.filter(p => p.high === mx);
+    const medAll = medianOf(pw.filter(p => p.count_close != null).map(p => p.count_close));
+    const medPlat = medianOf(plat.filter(p => p.count_close != null).map(p => p.count_close));
+    const implied = mx / CEILING_MULT;
+    if (plat.length >= PLATEAU_MIN_CANDLES && medAll > 0 && medPlat !== null && medPlat / medAll <= PLATEAU_COUNT_RATIO_MAX
+        && est > 0 && implied / est >= PLATEAU_BAND[0] && implied / est <= PLATEAU_BAND[1]) {
+      plateauAvg = implied;
+    }
+  }
+  return { est, floorAvg, plateauAvg, n: best.length };
 }
 
-// 지금 이 아이템에 쓸 평균가와 그 출처. { avg, source, recalib } — avg 가 null 이면 천장 신호 불가.
+// 지금 이 아이템에 쓸 평균가와 그 출처. { avg, source, recalib, est, floorAvg, plateauAvg }
 function effectiveAvg(w) {
-  const { est, floorAvg } = estimateAvgFromHistory(w.kind_id);
+  const { est, floorAvg, plateauAvg } = estimateAvgFromHistory(w.kind_id);
   const typedFresh = w.avgPrice > 0 && w.avgPriceAt && (Date.now() - w.avgPriceAt) <= AVG_STALE_MS;
   let avg = null, source = null, recalib = false;
   if (typedFresh) { avg = w.avgPrice; source = '입력'; }
-  else if (est && w.avgRatio > 0) {
-    avg = est * w.avgRatio; source = '보정';
-    if (!w.avgRatioAt || (Date.now() - w.avgRatioAt) > RATIO_STALE_MS) recalib = true;
-  }
+  else if (plateauAvg) { avg = plateauAvg; source = '자동'; }
+  else if (est && w.avgRatio > 0) { avg = est * w.avgRatio; source = '보정'; }
   else if (est) { avg = est; source = '미보정'; recalib = true; }
   else if (w.avgPrice > 0) { avg = w.avgPrice; source = '옛입력'; recalib = true; }
   if (avg !== null && floorAvg && floorAvg > avg * 1.001) {
     // 추정이 관측 하한보다 낮다 = 확실히 틀렸다. 하한으로 올리고 재보정을 권한다.
     avg = floorAvg; source += '·하한'; recalib = true;
   }
-  return { avg, source, recalib, est, floorAvg };
+  return { avg, source, recalib, est, floorAvg, plateauAvg };
+}
+
+// plateau 가 잡히면 계수를 학습해 둔다 — 그 뒤 물량이 풀려 plateau 가 사라져도 보정이 남는다.
+// 기존 계수와 5% 이상 다를 때만 갱신·저장 (미세 변동으로 매번 저장·동기화하지 않게).
+function learnRatioFromPlateau(w) {
+  const { est, plateauAvg } = estimateAvgFromHistory(w.kind_id);
+  if (!(plateauAvg > 0) || !(est > 0)) return false;
+  const ratio = plateauAvg / est;
+  if (w.avgRatio > 0 && Math.abs(ratio / w.avgRatio - 1) < 0.05) return false;
+  w.avgRatio = ratio; w.avgRatioAt = Date.now(); w.avgRatioSrc = 'auto';
+  saveWatchStateToStorage();
+  return true;
 }
 
 // 카드에 보이는 "평균 N (출처)" 한 줄. 카드 렌더와 부분 갱신이 같은 함수를 써서 어긋나지 않게 한다.
 function avgLine(w) {
   const ea = effectiveAvg(w);
   if (ea.avg === null) return '평균 —';
-  const tag = { '입력': '입력', '보정': '보정', '미보정': '미보정 ±15%', '옛입력': '옛 입력' }[ea.source.split('·')[0]] || ea.source;
+  const tag = { '입력': '입력', '자동': '자동보정', '보정': '보정', '미보정': '미보정 ±15%', '옛입력': '옛 입력' }[ea.source.split('·')[0]] || ea.source;
   return `평균 <b style="color:var(--text);">${Math.round(ea.avg).toLocaleString()}</b> <span style="opacity:.75;">${tag}${ea.source.includes('하한') ? '·하한' : ''}</span>${ea.recalib ? ' ⏰' : ''}`;
 }
 function avgTitle(w) {
   const ea = effectiveAvg(w);
   const parts = [];
   if (ea.est) parts.push(`API 추정(72h 거래량 가중) ${Math.round(ea.est).toLocaleString()}`);
-  if (w.avgRatio > 0) parts.push(`보정 계수 ×${w.avgRatio.toFixed(3)} (${w.avgRatioAt ? timeAgoText(w.avgRatioAt).replace(' 갱신', ' 학습') : ''})`);
+  if (ea.plateauAvg) parts.push(`자동보정: 최근 12h 물량이 마른 시간대에 최저가가 ${Math.round(ea.plateauAvg * CEILING_MULT).toLocaleString()} 에 머물렀어요 — 그게 천장`);
+  if (w.avgRatio > 0) parts.push(`보정 계수 ×${w.avgRatio.toFixed(3)} (${w.avgRatioSrc === 'auto' ? '자동 학습' : '입력'}${w.avgRatioAt ? ', ' + timeAgoText(w.avgRatioAt).replace(' 갱신', ' 전') : ''})`);
   if (w.avgPrice > 0 && w.avgPriceAt) parts.push(`마지막 입력 ${Math.round(w.avgPrice).toLocaleString()} (${timeAgoText(w.avgPriceAt).replace(' 갱신', ' 전')})`);
   if (ea.floorAvg) parts.push(`관측 하한 ${Math.round(ea.floorAvg).toLocaleString()} (최근 6h max(high)÷1.5 — 천장은 이보다 낮을 수 없음)`);
-  if (ea.recalib) parts.push('⏰ 게임 평균을 한 번 입력하면 정확해져요.');
+  if (ea.recalib) parts.push('⏰ 아직 근거가 약해요 — 물량이 한 번 마르면 자동으로 잡히고, 게임 평균을 입력해도 돼요.');
   return parts.join(String.fromCharCode(10));
 }
 
@@ -4368,7 +4407,7 @@ function computeBandBadge(w) {
     `천장(평균×1.5) ${c.toLocaleString()} 기준으로 지금 최저가 ${w.price.toLocaleString()} 은 ${pos.toFixed(1)}% 위치예요.`,
     `평균 ${Math.round(ea.avg).toLocaleString()} (${ea.source}) · 팔 때 ${w.sellHighPct || 90}% 이상 · 살 때 ${w.buyLowPct || 60}% 이하`,
   ];
-  if (stale) lines.push('⏰ 게임의 평균 판매가를 한 번 입력해 주세요 — 추정을 보정합니다. (미보정 추정은 최대 15% 틀릴 수 있어요)');
+  if (stale) lines.push('⏰ 평균 근거가 약해요(미보정 최대 15% 오차). 물량이 한 번 마르면 자동으로 잡히고, 게임 평균을 입력해도 돼요.');
   return {
     pos, ceiling: c, stale,
     text: `천장의 ${pos.toFixed(0)}% · ${label}` + (stale ? ' ⏰' : ''),

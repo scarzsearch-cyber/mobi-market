@@ -166,36 +166,83 @@ PTS = [pt(8, 100, 200, 50, 50), pt(7, 100, 200, 50, 50),
        pt(5, 110, 115, 60, 50), pt(4, 110, 125, 60, 50),
        pt(3, 120, 125, 50, 50), pt(2, 120, 135, 50, 50),
        pt(1, 130, 135, 70, 50), pt(0, 130, 150, 70, 50)]
-est, floor_avg, n = watch.estimate_avg(PTS, NOW_TS)
+est, floor_avg, _pl, n = watch.estimate_avg(PTS, NOW_TS)
 check("표본 8", n, 8)
 check("거래량 가중 평균 123.33", round(est, 2), 123.33)
 check("6h 관측 하한 150/1.5=100 (8h·7h 전 200 은 창 밖)", round(floor_avg, 2), 100.0)
 ZERO = [pt(5, 100, 100, 9, 9), pt(4, 110, 110, 9, 9), pt(3, 120, 120, 9, 9),
         pt(2, 130, 130, 9, 9), pt(1, 140, 140, 9, 9), pt(0, 150, 150, 9, 9)]
-est2, _, n2 = watch.estimate_avg(ZERO, NOW_TS)
+est2, _, _, n2 = watch.estimate_avg(ZERO, NOW_TS)
 check("팔린 수량 0 이면 단순 평균으로 (6개 → 125)", (n2, round(est2, 2)), (6, 125.0))
 check("표본 5개 이하면 None", watch.estimate_avg(PTS[:5], NOW_TS)[0], None)
+check("8캔들 픽스처엔 plateau 없음 (max(high) 150 이 1캔들)", _pl, None)
 
 ms = lambda h_ago: int((NOW_TS - h_ago * 3600) * 1000)
-a, src, rc = watch.effective_avg({"avgPrice": 150, "avgPriceAt": ms(1)}, est, floor_avg, NOW_TS)
+a, src, rc = watch.effective_avg({"avgPrice": 150, "avgPriceAt": ms(1)}, est, floor_avg, None, NOW_TS)
 check("1h 전 입력 150 → 입력", (a, src, rc), (150, "입력", False))
-a, src, rc = watch.effective_avg({"avgPrice": 90, "avgPriceAt": ms(1)}, est, floor_avg, NOW_TS)
+a, src, rc = watch.effective_avg({"avgPrice": 90, "avgPriceAt": ms(1)}, est, floor_avg, None, NOW_TS)
 check("입력 90 < 하한 100 → 하한으로 올리고 재보정", (a, src, rc), (100.0, "입력·하한", True))
-a, src, rc = watch.effective_avg({"avgPrice": 150, "avgPriceAt": ms(13), "avgRatio": 0.9, "avgRatioAt": ms(24)}, est, floor_avg, NOW_TS)
+a, src, rc = watch.effective_avg({"avgPrice": 150, "avgPriceAt": ms(13), "avgRatio": 0.9, "avgRatioAt": ms(24)}, est, floor_avg, None, NOW_TS)
 check("13h 전 입력은 낡음 → 추정×0.9 = 111 (보정)", (round(a, 2), src, rc), (111.0, "보정", False))
-a, src, rc = watch.effective_avg({"avgRatio": 0.9, "avgRatioAt": ms(24 * 8)}, est, floor_avg, NOW_TS)
-check("계수가 8일 넘으면 재보정 권장", (round(a, 2), src, rc), (111.0, "보정", True))
-a, src, rc = watch.effective_avg({}, est, floor_avg, NOW_TS)
+a, src, rc = watch.effective_avg({"avgRatio": 0.9, "avgRatioAt": ms(24 * 8)}, est, floor_avg, None, NOW_TS)
+check("계수가 오래돼도 증거 없인 재촉 안 함", (round(a, 2), src, rc), (111.0, "보정", False))
+a, src, rc = watch.effective_avg({}, est, floor_avg, None, NOW_TS)
 check("아무것도 없으면 미보정 추정", (round(a, 2), src, rc), (123.33, "미보정", True))
-a, src, rc = watch.effective_avg({"avgPrice": 140, "avgPriceAt": ms(30)}, None, None, NOW_TS)
+a, src, rc = watch.effective_avg({"avgPrice": 140, "avgPriceAt": ms(30)}, None, None, None, NOW_TS)
 check("추정 불가 + 옛 입력 → 옛입력", (a, src, rc), (140, "옛입력", True))
-a, src, rc = watch.effective_avg({}, None, None, NOW_TS)
+a, src, rc = watch.effective_avg({}, None, None, None, NOW_TS)
 check("아무것도 없으면 None", a, None)
 
 # evaluate 는 avgPrice_effective 를 우선한다
 w13 = {"kind_id": 1, "name": "테스트", "avgPrice": 999, "avgPrice_effective": 100, "sellHighAlert": True}
 msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, w13, [])
 check("유효 평균 100 → 천장 150, 140은 93% → 울림", len(msgs), 1)
+
+
+# ── [14] plateau 자동보정 (index.html 과 같은 픽스처) ──
+print("")
+print("[14] plateau 자동보정 — 물량이 마른 시간대에 최저가가 천장에 붙는다")
+def ptc(h_ago, close, high, cnt):
+    return {"time": (NOW - timedelta(hours=h_ago)).isoformat().replace("+00:00", "Z"),
+            "close": close, "high": high, "count_open": cnt, "count_close": cnt}
+# 12캔들, 종가 100. 최근 3캔들(h 2,1,0) high 150 · 수량 30 (평소 100 의 30%) → 천장 150 → 평균 100
+base12 = [ptc(h, 100, 105, 100) for h in range(11, 3, -1)]        # h 11..4 (8개)
+A = base12 + [ptc(3, 100, 105, 100), ptc(2, 100, 150, 30), ptc(1, 100, 150, 30), ptc(0, 100, 150, 30)]
+est, fl, pl, n = watch.estimate_avg(A, NOW_TS)
+check("A: 추정 100 (팔린 수량 0 → 단순 평균)", round(est, 2), 100.0)
+check("A: plateau 3캔들·수량 30% → 자동보정 100", pl, 100.0)
+check("A: 하한 150/1.5 = 100", round(fl, 2), 100.0)
+B = base12 + [ptc(3, 100, 105, 100), ptc(2, 100, 150, 100), ptc(1, 100, 150, 100), ptc(0, 100, 150, 100)]
+check("B: plateau 수량이 평소와 같으면(가짜) 기각", watch.estimate_avg(B, NOW_TS)[2], None)
+C = base12 + [ptc(3, 100, 105, 100), ptc(2, 100, 300, 30), ptc(1, 100, 300, 30), ptc(0, 100, 300, 30)]
+check("C: 역산 200 이 추정 100 의 2배 → 대역 밖, 기각", watch.estimate_avg(C, NOW_TS)[2], None)
+D = base12 + [ptc(3, 100, 105, 100), ptc(2, 100, 105, 100), ptc(1, 100, 150, 30), ptc(0, 100, 150, 30)]
+check("D: 2캔들뿐이면 기각", watch.estimate_avg(D, NOW_TS)[2], None)
+
+a, src, rc = watch.effective_avg({}, est, fl, pl, NOW_TS)
+check("plateau 있으면 자동 (재촉 없음)", (a, src, rc), (100.0, "자동", False))
+a, src, rc = watch.effective_avg({"avgRatio": 0.5, "avgRatioAt": ms(1)}, est, fl, pl, NOW_TS)
+check("plateau 가 계수보다 우선", (a, src), (100.0, "자동"))
+a, src, rc = watch.effective_avg({"avgPrice": 120, "avgPriceAt": ms(1)}, est, fl, pl, NOW_TS)
+check("12h 안 입력이 plateau 보다 우선", (a, src), (120, "입력"))
+a, src, rc = watch.effective_avg({"avgRatio": 0.9, "avgRatioAt": ms(48)}, est, fl, None, NOW_TS,
+                                 learned={"ratio": 1.2, "ratioAt": NOW_TS - 3600})
+check("설정 계수(2일 전)와 서버 학습 계수(1h 전) 중 더 최근 것", (round(a, 1), src), (120.0, "보정"))
+# 하한(100)이 90 을 덮으므로, 계수 선택만 보려고 하한을 뺀다
+a, src, rc = watch.effective_avg({"avgRatio": 0.9, "avgRatioAt": ms(1)}, est, None, None, NOW_TS,
+                                 learned={"ratio": 1.2, "ratioAt": NOW_TS - 48 * 3600})
+check("반대로 설정 계수가 더 최근이면 그것", (round(a, 1), src), (90.0, "보정"))
+a, src, rc = watch.effective_avg({"avgRatio": 0.9, "avgRatioAt": ms(1)}, est, fl, None, NOW_TS,
+                                 learned={"ratio": 1.2, "ratioAt": NOW_TS - 48 * 3600})
+check("같은 경우 하한 100 이 있으면 끌어올리고 ⏰", (round(a, 1), src, rc), (100.0, "보정·하한", True))
+
+print("")
+print("[15] 토글 기본 켜짐 — 키가 없으면 켜진 것으로")
+w15 = {"kind_id": 1, "name": "테스트", "avgPrice_effective": 100}
+msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, w15, [])
+check("sellHighAlert 키 없음 → 93% 에 울림", len(msgs), 1)
+msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, {**w15, "sellHighAlert": False}, [])
+check("명시적 False 면 안 울림", len(msgs), 0)
 
 print("\n" + ("─" * 50))
 print("❌ 실패 " + str(len(fails)) + "건: " + ", ".join(fails) if fails else "✅ 전부 통과")

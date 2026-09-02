@@ -132,6 +132,7 @@ def main():
     for dev, wname, k, m, rs in rows:
         print(f"  최대편차 {dev:6.1%} | 평균비 {m:.3f} | {wname:14} {k:26} | " + " ".join(f"{r:.3f}" for r in rs))
     plateau_report(key)
+    plateau_count_report(key)
     return 0
 
 
@@ -174,6 +175,51 @@ def plateau_report(key):
     print()
     print("판정 기준: 18→06 구간에서 max(high) 가 정답 천장과 '일치'하고 머문 캔들이 2 이상이면"
           " plateau 로 천장을 잡을 수 있다. 1개뿐이면 우연한 고가 매물일 수 있어 약하다.")
+
+
+def plateau_count_report(key):
+    """진짜 천장 plateau 와 가짜 plateau(큰 매물이 눌러앉음)를 수량으로 가를 수 있는지.
+
+    진짜 천장은 물량이 말랐을 때 나타난다 → plateau 캔들의 수량이 창 전체 중앙값보다 낮아야 한다.
+    가짜 plateau 는 큰 매물이 싸게 걸려 있는 것 → 수량이 평소와 같거나 많다.
+    판정 후보: plateau 캔들 >= 3 · plateau 중앙 수량 <= 창 중앙 수량의 50% · 역산평균/추정 in [0.75, 1.3]
+    """
+    import statistics
+    now = datetime.now(timezone.utc)
+    b06 = boundary_before(now, (6,))
+    windows = [
+        ("18→06 (실측유효)", b06 - timedelta(hours=12), b06),
+        ("최근 12h", now - timedelta(hours=12), now),
+        ("최근 6h", now - timedelta(hours=6), now),
+    ]
+    print()
+    print("=" * 72)
+    print("plateau + 수량 판별 — 진짜 천장이면 plateau 시간대 수량이 낮아야 한다")
+    for name, kid, truth_avg, truth_cap in TRUTH:
+        data = fetch(f"{BASE}/market/prices/history?kind_id={kid}&days=7", key)
+        pts = [p for p in (data.get("points") or []) if p.get("high") is not None]
+        est_all, _ = estimates(pts, now)
+        est = (est_all or {}).get("sold_weighted") or (est_all or {}).get("close_mean")
+        print(f"--- {name}  정답 천장 {truth_cap:g} 평균 {truth_avg:g}  | 72h 추정 {est if est is None else round(est, 1)}")
+        for wname, t0, t1 in windows:
+            win = [p for p in pts if t0 <= parse_ts(p["time"]) < t1]
+            if len(win) < 3:
+                print(f"   [{wname:14}] 캔들 {len(win)} — 부족")
+                continue
+            mx = max(p["high"] for p in win)
+            plat = [p for p in win if p["high"] == mx]
+            counts = [p.get("count_close") for p in win if p.get("count_close") is not None]
+            pc = [p.get("count_close") for p in plat if p.get("count_close") is not None]
+            med_all = statistics.median(counts) if counts else None
+            med_plat = statistics.median(pc) if pc else None
+            cratio = (med_plat / med_all) if (med_all and med_plat is not None) else None
+            implied = mx / 1.5
+            iratio = (implied / est) if est else None
+            ok = (len(plat) >= 3 and cratio is not None and cratio <= 0.5 and iratio is not None and 0.75 <= iratio <= 1.3)
+            truth_hit = abs(mx - truth_cap) / truth_cap < 0.005
+            verdict = ("✔ 천장으로 채택" if ok else "— 채택 안 함") + ("  [실제 천장 " + ("맞음" if truth_hit else "아님") + "]" if wname.startswith("18") else "")
+            print(f"   [{wname:14}] max(high)={mx:>10,.0f} plateau {len(plat)}캔들 | 수량 plateau중앙 {med_plat} / 창중앙 {med_all} = {cratio if cratio is None else round(cratio, 2)}"
+                  f" | 역산평균/추정 {iratio if iratio is None else round(iratio, 3)} → {verdict}")
 
 
 if __name__ == "__main__":

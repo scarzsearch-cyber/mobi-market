@@ -1039,6 +1039,13 @@ function loadStateFromStorage() {
     const savedAlerts = localStorage.getItem(LS_KEYS.alerts);
     if (savedAlerts) {
       alertsByKind = JSON.parse(savedAlerts) || {};
+      // 지금은 목표가(threshold)만 남았다. 옛 형식(고점 대비·추세 전환)이 저장돼 있으면 여기서
+      // 걷어낸다 — 렌더·판정마다 방어하는 것보다 한 번 지우는 게 깔끔하고, 백업·서버 동기화에도
+      // 계속 실려 다니지 않는다.
+      Object.keys(alertsByKind).forEach(k => {
+        const kept = (alertsByKind[k] || []).filter(a => !a.type || a.type === 'threshold');
+        if (kept.length) alertsByKind[k] = kept; else delete alertsByKind[k];
+      });
       let maxId = 0;
       Object.values(alertsByKind).forEach(list => list.forEach(a => { if (a.id > maxId) maxId = a.id; }));
       alertIdSeq = maxId + 1;
@@ -2754,7 +2761,8 @@ function toggleAlertPanel(kindId) {
 // 등록된 알림 목록(<li>들)만 따로 만든다 — 알림이 울리거나 재무장될 때 패널 전체가 아니라
 // 이 부분만 제자리에서 교체하려고 분리했다(patchAlertDisplay 참고).
 function renderAlertItemsHtml(kindId) {
-  const list = alertsByKind[kindId] || [];
+  // 옛 형식(고점 대비·추세 전환)은 price 가 없어 그리면 던진다 — 목표가만 그린다.
+  const list = (alertsByKind[kindId] || []).filter(a => !a.type || a.type === 'threshold');
   return list.length
     ? list.map(a => {
         const kindLabel = `💰 ${a.price.toLocaleString()} ${a.dir === 'above' ? '이상' : '이하'}`;

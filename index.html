@@ -1253,11 +1253,6 @@ document.getElementById('panRightBtn').addEventListener('click', () => panZoom(1
 document.getElementById('zoomBackBtn').addEventListener('click', zoomBack);
 document.getElementById('zoomResetBtn').addEventListener('click', resetZoom);
 
-// 새로고침(F5)해도 API 키·감시 목록·알림·마지막 검색 상태가 남아있도록 먼저 복원한다.
-loadStateFromStorage();
-renderWatchList();
-loadCraftStateFromStorage(); // 제작 손익 계산기의 재료 조합 복원 (watchList/DOM 준비된 뒤 실행)
-
 // 카카오 로그인은 페이지를 통째로 떠났다가 돌아오는 방식이고, 창을 닫을 때도 마찬가지로
 // 스크립트가 갑자기 멈춘다. 평소엔 감시 목록이 바뀔 때마다 바로바로 저장되긴 하지만, 혹시
 // 모를 타이밍 문제(저장이 막 끝나기 직전에 페이지가 떠나는 경우 등)에 대비해 페이지를 떠나기
@@ -1287,6 +1282,18 @@ function migrateBandDefaults() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  // 새로고침(F5)해도 API 키·감시 목록·알림·마지막 검색 상태가 남아있도록 먼저 복원한다.
+  // ★ 예전엔 이 세 줄이 스크립트 최상단(top-level)에서 곧바로 실행됐다 — 스크립트가 위에서
+  // 아래로 실행되는 도중이라, 그 시점엔 이 파일 뒤쪽에 선언된 const(예: AVG_STALE_MS·
+  // apiQueue)가 아직 초기화되지 않은 상태다. 감시 목록에 평균가(avgPrice)가 하나라도
+  // 저장돼 있으면 renderWatchList() → effectiveAvg()가 그 const를 참조하다 TDZ
+  // ReferenceError로 죽었고, 최상위 코드가 그 지점에서 멈추니 DOMContentLoaded 리스너
+  // 등록 자체를 포함해 뒤따르는 모든 최상위 코드가 통째로 실행되지 않았다 — apiQueue도
+  // 영원히 초기화되지 않아 나중에 "조회"를 눌러도 run()이 그 자리에서 또 TDZ로 죽었다.
+  // DOMContentLoaded 안으로 옮기면 이 시점엔 스크립트 전체가 이미 다 실행된 뒤라 안전하다.
+  loadStateFromStorage();
+  renderWatchList();
+  loadCraftStateFromStorage(); // 제작 손익 계산기의 재료 조합 복원 (watchList/DOM 준비된 뒤 실행)
   if (watchList.length) refreshWatchList();
   // 서버 감시가 지금 무엇을 보고 있는지 확인 — 토큰이 없어도 읽기는 되므로 항상 돈다.
   settingsSyncReady = true;

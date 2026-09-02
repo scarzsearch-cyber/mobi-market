@@ -46,6 +46,7 @@
 
   .controls{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
   .controls .inline-hint{margin-top:0; margin-left:2px;}
+  #watchSortSel{max-width:100%;}
   input, select, button{
     background:var(--panel-2); border:1px solid var(--line); color:var(--text);
     border-radius:6px; padding:8px 10px; font-size:14px; font-family:var(--sans);
@@ -244,10 +245,10 @@
           <label class="hint" style="margin:0;">정렬</label>
           <select id="watchSortSel" onchange="saveWatchSort()">
             <option value="default">추가된 순서</option>
-            <option value="band">천장 대비 싼 순 (위 = 살 때, 아래 = 천장 근접·팔 때)</option>
+            <option value="band">천장 대비 싼 순</option>
             <option value="price">현재가 낮은순</option>
           </select>
-          <span class="hint" style="margin:0;">※ 천장 순은 평균가를 입력한 아이템만 정렬돼요 — 안 넣은 건 맨 아래로 가요.</span>
+          <span class="hint" style="margin:0;">※ 천장 순: 위가 살 때(싸다), 아래가 팔 때(천장 근접). 평균가를 안 넣은 아이템은 맨 아래.</span>
         </div>
         <div id="watchList" class="watch-list-grid"></div>
       </div>

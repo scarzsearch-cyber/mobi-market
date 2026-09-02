@@ -855,6 +855,33 @@ function openSettingsOnGithub() {
   }
 }
 
+// 서버(settings.json)가 갖고 있는 평균가 학습값을 내 기기로 당겨온다. 위쪽 동기화는
+// 기기 → 서버 방향뿐이라, 폰과 PC를 따로 열면 한쪽이 배운 보정(avgRatio)이 다른 쪽 화면엔
+// 영원히 안 나타난다 — 감시 목록 자체는 같아도 "천장근접 %"가 기기마다 다르게 보이는 원인.
+// watch.py의 pick_ratio()와 같은 규약(더 최근 타임스탬프가 이긴다)으로 이 두 값만 당겨온다.
+// 감시 목록 구성·알림 on/off처럼 시각(timestamp)이 없는 값은 우열을 가릴 수 없으니 그대로 둔다.
+function pullAvgFromServer(remote) {
+  const byId = new Map(((remote && remote.watchList) || []).map(r => [r.kind_id, r]));
+  const touched = [];
+  watchList.forEach(w => {
+    const r = byId.get(w.kind_id);
+    if (!r) return;
+    if (r.avgPrice > 0 && (r.avgPriceAt || 0) > (w.avgPriceAt || 0)) {
+      w.avgPrice = r.avgPrice; w.avgPriceAt = r.avgPriceAt;
+      if (!touched.includes(w.kind_id)) touched.push(w.kind_id);
+    }
+    if (r.avgRatio > 0 && (r.avgRatioAt || 0) > (w.avgRatioAt || 0)) {
+      w.avgRatio = r.avgRatio; w.avgRatioAt = r.avgRatioAt; w.avgRatioSrc = r.avgRatioSrc || 'auto';
+      if (!touched.includes(w.kind_id)) touched.push(w.kind_id);
+    }
+  });
+  if (!touched.length) return;
+  // 로컬에만 반영한다 — saveWatchStateToStorage()를 부르면 서버에 다시 올리는 예약이 걸리는데,
+  // 방금 서버에서 받아온 값을 되돌려 올리는 건 불필요한 커밋만 만든다.
+  try { localStorage.setItem(LS_KEYS.watchList, JSON.stringify(watchList.map(slimWatchItem))); } catch (e) {}
+  touched.forEach(patchWatchItemDisplay);
+}
+
 // 토큰이 없어도 도는 확인 경로 — 같은 도메인의 파일이라 그냥 읽힌다.
 async function checkSettingsDrift() {
   if (!document.getElementById('settingsSyncStatus')) return;
@@ -865,6 +892,7 @@ async function checkSettingsDrift() {
         msg: '서버에 설정 파일이 아직 없어요 — 서버 감시가 아무것도 안 보고 있습니다.' };
     } else {
       const remote = await res.json();
+      pullAvgFromServer(remote);
       const mine = watchList.map(w => w.name).sort();
       const theirs = ((remote && remote.watchList) || []).map(w => w.name).sort();
       settingsSyncState = JSON.stringify(mine) === JSON.stringify(theirs)
@@ -1295,6 +1323,8 @@ document.addEventListener('visibilitychange', () => {
     setHint(`⏱ 탭이 ${hiddenMinutes}분간 백그라운드에 있어서 그동안 감시가 느려졌을 수 있어요 — 지금 최신 데이터로 갱신할게요.`);
     if (watchList.length) refreshWatchList();
     if (lastKindId) run();
+    // 그 사이 다른 기기나 서버 자체 학습이 평균가 보정을 갱신했을 수 있다 — 같이 당겨온다.
+    checkSettingsDrift();
   }
 });
 

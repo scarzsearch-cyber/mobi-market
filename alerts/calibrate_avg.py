@@ -131,7 +131,49 @@ def main():
     rows.sort()
     for dev, wname, k, m, rs in rows:
         print(f"  최대편차 {dev:6.1%} | 평균비 {m:.3f} | {wname:14} {k:26} | " + " ".join(f"{r:.3f}" for r in rs))
+    plateau_report(key)
     return 0
+
+
+def plateau_report(key):
+    """천장 자동 감지 가설 검증.
+
+    물량이 마르면 최저가가 판매가 상한(천장)에 정확히 붙는다 — 모두가 상한에 걸어두니까.
+    그러면 12시간 버킷 안에서 캔들 high 가 같은 값에 여러 시간 머무는 평평한 구간이 생기고,
+    그 값이 곧 천장(= 평균 x 1.5)이다. 소유자 실측 천장이 유효했던 18시→06시 구간에서
+    max(high) 가 실측 천장과 맞는지 본다. 맞으면 평균가를 입력 없이 역산할 수 있다.
+    """
+    now = datetime.now(timezone.utc)
+    b06 = boundary_before(now, (6,))                 # 오늘 06:00 KST
+    prev18 = b06 - timedelta(hours=12)               # 어제 18:00 KST
+    b00_12 = boundary_before(now, (0, 12))
+    windows = [
+        ("18→06 (실측 유효 구간)", prev18, b06),
+        ("06→지금", b06, now),
+        ("직전 00/12→지금", b00_12, now),
+    ]
+    print()
+    print("=" * 72)
+    print("천장 자동 감지 (plateau) — 각 구간 max(high), 그 값에 머문 캔들 수, 역산 평균/정답")
+    for name, kid, truth_avg, truth_cap in TRUTH:
+        data = fetch(f"{BASE}/market/prices/history?kind_id={kid}&days=7", key)
+        pts = [p for p in (data.get("points") or []) if p.get("high") is not None]
+        print(f"--- {name}  정답 천장 {truth_cap:g}  평균 {truth_avg:g}")
+        for wname, t0, t1 in windows:
+            win = [p for p in pts if t0 <= parse_ts(p["time"]) < t1]
+            if not win:
+                print(f"   [{wname}] 캔들 없음")
+                continue
+            mx = max(p["high"] for p in win)
+            at_max = sum(1 for p in win if p["high"] == mx)
+            near = sum(1 for p in win if p["high"] >= mx * 0.995)
+            implied = mx / 1.5
+            hit = "일치" if abs(mx - truth_cap) / truth_cap < 0.005 else f"{mx/truth_cap:.3f}x"
+            print(f"   [{wname:16}] 캔들 {len(win):2}  max(high)={mx:>12,.0f}  머문 캔들 {at_max}(±0.5% {near})"
+                  f"  역산평균 {implied:>12,.1f} (/정답 {implied/truth_avg:.3f})  천장 대비 {hit}")
+    print()
+    print("판정 기준: 18→06 구간에서 max(high) 가 정답 천장과 '일치'하고 머문 캔들이 2 이상이면"
+          " plateau 로 천장을 잡을 수 있다. 1개뿐이면 우연한 고가 매물일 수 있어 약하다.")
 
 
 if __name__ == "__main__":

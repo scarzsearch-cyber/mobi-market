@@ -1242,10 +1242,27 @@ window.addEventListener('beforeunload', () => {
 
 // 페이지를 열면 저장된 마지막 검색어(없으면 기본값 파동의 영혼석)를 자동 조회하고,
 // 감시 목록도 함께 최신화한다. API 키가 비어있으면 에러부터 띄우지 않고 안내만 한다.
+// 4단계 이전 앱은 sellHighAlert/buyLowAlert 를 저장할 때 !!undefined → false 로 써 뒀다. 그건 사용자가
+// 끈 게 아니라 기본값이 없던 흔적이다. 4단계부터 기본이 켜짐이므로 딱 한 번, 저장된 false 를 켜짐으로
+// 올린다. 실제로 이 흔적이 토큰 동기화를 타고 서버까지 가서 6개 전부 천장 신호가 꺼진 채 올라갔다.
+// 플래그를 남겨 두 번 돌지 않게 하고, 그 뒤 사용자가 끄는 건 그대로 존중된다.
+function migrateBandDefaults() {
+  const FLAG = 'ggMarket.migr_bandDefaults';
+  try { if (localStorage.getItem(FLAG) === '1') return; } catch (e) { return; }
+  let changed = false;
+  watchList.forEach(w => {
+    if (w.sellHighAlert === false) { w.sellHighAlert = true; changed = true; }
+    if (w.buyLowAlert === false) { w.buyLowAlert = true; changed = true; }
+  });
+  try { localStorage.setItem(FLAG, '1'); } catch (e) {}
+  if (changed) { saveWatchStateToStorage(); renderWatchList(); } // 저장 → 토큰이 있으면 30초 뒤 서버에도 반영
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   if (watchList.length) refreshWatchList();
   // 서버 감시가 지금 무엇을 보고 있는지 확인 — 토큰이 없어도 읽기는 되므로 항상 돈다.
   settingsSyncReady = true;
+  migrateBandDefaults(); // 동기화가 준비된 뒤에 돌아야 저장이 서버까지 간다
   checkSettingsDrift();
 
   // 카카오 알림 메시지의 "차트 보기" 버튼으로 들어온 경우(?open=kind_id) — 감시 목록에 있으면 바로 그 아이템으로 이동

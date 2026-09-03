@@ -7,7 +7,7 @@
       "lowestPriceAlert": false,
       "lowestPriceThresholdPct": 0,
       "lowestPriceConfirm": 1,
-      "highestPriceAlert": true,
+      "highestPriceAlert": false,
       "highestPriceThresholdPct": 1.6,
       "highestPriceConfirm": 2,
       "listingDropAlert": false,
@@ -23,12 +23,13 @@
       "sellHighPct": 90,
       "buyLowAlert": true,
       "buyLowPct": 60,
-      "rebuyAlert": false
+      "rebuyAlert": false,
+      "addedAt": 0
     },
     {
       "kind_id": 281480675678393,
       "name": "야생의 영혼석",
-      "lowestPriceAlert": true,
+      "lowestPriceAlert": false,
       "lowestPriceThresholdPct": 5.4,
       "lowestPriceConfirm": 2,
       "highestPriceAlert": false,
@@ -47,7 +48,8 @@
       "sellHighPct": 90,
       "buyLowAlert": true,
       "buyLowPct": 60,
-      "rebuyAlert": false
+      "rebuyAlert": false,
+      "addedAt": 0
     },
     {
       "kind_id": 281481304423231,
@@ -55,7 +57,7 @@
       "lowestPriceAlert": false,
       "lowestPriceThresholdPct": 0,
       "lowestPriceConfirm": 1,
-      "highestPriceAlert": true,
+      "highestPriceAlert": false,
       "highestPriceThresholdPct": 1.8,
       "highestPriceConfirm": 2,
       "listingDropAlert": false,
@@ -71,7 +73,8 @@
       "sellHighPct": 90,
       "buyLowAlert": true,
       "buyLowPct": 60,
-      "rebuyAlert": false
+      "rebuyAlert": false,
+      "addedAt": 0
     },
     {
       "kind_id": 281480597107872,
@@ -82,20 +85,21 @@
       "highestPriceAlert": false,
       "highestPriceThresholdPct": 0,
       "highestPriceConfirm": 2,
-      "listingDropAlert": false,
+      "listingDropAlert": true,
       "listingDropThreshold": 1,
       "listingDropPct": 0,
-      "avgPrice": 37,
-      "avgPriceAt": 1788316218364,
-      "avgRatio": 0.9897825473690185,
-      "avgRatioAt": 1788323658039,
-      "avgRatioSrc": "auto",
+      "avgPrice": 33,
+      "avgPriceAt": 1788364471908,
+      "avgRatio": 1.027348732788594,
+      "avgRatioAt": 1788364471908,
+      "avgRatioSrc": "manual",
       "mySellPrice": null,
       "sellHighAlert": true,
       "sellHighPct": 90,
       "buyLowAlert": true,
       "buyLowPct": 60,
-      "rebuyAlert": false
+      "rebuyAlert": false,
+      "addedAt": 0
     },
     {
       "kind_id": 281480871837308,
@@ -110,16 +114,17 @@
       "listingDropThreshold": 1,
       "listingDropPct": 0,
       "avgPrice": 42,
-      "avgPriceAt": 1788316232768,
-      "avgRatio": null,
-      "avgRatioAt": null,
-      "avgRatioSrc": null,
+      "avgPriceAt": 1788364465911,
+      "avgRatio": 1.0565161667491119,
+      "avgRatioAt": 1788364465911,
+      "avgRatioSrc": "manual",
       "mySellPrice": null,
       "sellHighAlert": true,
       "sellHighPct": 90,
       "buyLowAlert": true,
       "buyLowPct": 60,
-      "rebuyAlert": false
+      "rebuyAlert": false,
+      "addedAt": 0
     },
     {
       "kind_id": 281481283031319,
@@ -133,19 +138,21 @@
       "listingDropAlert": false,
       "listingDropThreshold": 1,
       "listingDropPct": 0,
-      "avgPrice": null,
-      "avgPriceAt": null,
-      "avgRatio": null,
-      "avgRatioAt": null,
-      "avgRatioSrc": null,
+      "avgPrice": 301510,
+      "avgPriceAt": 1788364486655,
+      "avgRatio": 0.9260773411088368,
+      "avgRatioAt": 1788364486655,
+      "avgRatioSrc": "manual",
       "mySellPrice": null,
       "sellHighAlert": true,
       "sellHighPct": 90,
       "buyLowAlert": true,
       "buyLowPct": 60,
-      "rebuyAlert": false
+      "rebuyAlert": false,
+      "addedAt": 0
     }
   ],
+  "removedKinds": {},
   "alertsByKind": {},
   "quiet": {
     "enabled": false,

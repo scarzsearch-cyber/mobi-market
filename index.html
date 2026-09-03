@@ -585,6 +585,7 @@ const LS_KEYS = {
   craftMaterialRows: 'ggMarket.craftMaterialRows',
   craftEquipPrice: 'ggMarket.craftEquipPrice',
   removedKinds: 'ggMarket.removedKinds',
+  firedFlags: 'ggMarket.firedFlags',
 };
 
 // 카카오 "나에게 보내기"는 기본 앱 기준 1일 호출 횟수 제한이 있다(보통 100회).
@@ -626,6 +627,34 @@ function slimWatchItem(w) {
   };
 }
 
+// ---- "이미 울렸다" 기록 ----
+// 천장근접·저가·품귀·되사기는 한 번 울리면 조건에서 벗어나야 다시 울린다(히스테리시스).
+// 그런데 그 기록이 메모리에만 있어서 새로고침하면 날아갔다 — 조건이 그대로여도 페이지를
+// 열 때마다 알림과 소리가 다시 났다. 품귀가 기본 켜짐이 되면서 아이템 수만큼 한꺼번에
+// 울릴 수 있게 돼 더 두드러진다.
+// ★ 이 값은 watchList 와 따로 저장한다. slimWatchItem 에 넣으면 settings.json 을 타고
+//   서버까지 올라가서, 알림이 울릴 때마다 감시 설정이 바뀐 것으로 잡혀 커밋이 쌓인다.
+const FIRED_KEYS = ['_sellHighFired', '_buyLowFired', '_scarceFired', '_rebuyFired'];
+
+function saveFiredFlags() {
+  const out = {};
+  watchList.forEach(w => {
+    const on = FIRED_KEYS.filter(k => w[k]);
+    if (on.length) out[w.kind_id] = on;
+  });
+  try { localStorage.setItem(LS_KEYS.firedFlags, JSON.stringify(out)); } catch (e) {}
+}
+
+function loadFiredFlags() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LS_KEYS.firedFlags) || 'null'); } catch (e) { return; }
+  if (!saved || typeof saved !== 'object') return;
+  watchList.forEach(w => {
+    const on = saved[w.kind_id];
+    if (Array.isArray(on)) on.forEach(k => { if (FIRED_KEYS.includes(k)) w[k] = true; });
+  });
+}
+
 // 슬림 객체(저장/백업에서 불러온 값)를 실제 감시 목록 항목(실시간 필드 포함)으로 복원한다.
 function restoreWatchItem(w) {
   return {
@@ -655,6 +684,7 @@ function saveWatchStateToStorage() {
     localStorage.setItem(LS_KEYS.alerts, JSON.stringify(alertsByKind));
     localStorage.setItem(LS_KEYS.focus, JSON.stringify(Array.from(focusKindIds)));
     localStorage.setItem(LS_KEYS.removedKinds, JSON.stringify(removedKinds));
+    saveFiredFlags();
   } catch (e) {}
   // 서버 감시가 보는 파일도 따라오게 한다. 설정 변경은 전부 이 함수를 거치므로
   // (토글·임계값·알림 추가/삭제) 여기 한 곳만 걸면 빠지는 경로가 없다.
@@ -1171,6 +1201,7 @@ function loadStateFromStorage() {
     }
     const savedRemoved = localStorage.getItem(LS_KEYS.removedKinds);
     if (savedRemoved) removedKinds = JSON.parse(savedRemoved) || {};
+    loadFiredFlags(); // 새로고침해도 이미 울린 알림이 다시 울리지 않게
   } catch (e) { console.error('[복원 실패] 감시 목록', e); }
 
   try {
@@ -4015,6 +4046,9 @@ async function refreshWatchItem(w) {
     await ensureEstimateHistory(w.kind_id, w.name);
     learnRatioFromPlateau(w); // 물량이 마른 순간을 잡으면 계수를 스스로 배운다
 
+    // 아래 네 신호의 발화 상태가 이번 갱신에서 바뀌었는지 보려고 먼저 찍어둔다.
+    const firedBefore = FIRED_KEYS.map(k => !!w[k]).join();
+
     // ── 품귀 — 이 아이템 기준으로 매물이 바닥권에 "새로 들어섰을 때" 한 번 ──
     // ★ 반드시 ensureEstimateHistory 뒤에 와야 한다 — 백분위가 그 7일 이력을 쓰기 때문에,
     //   앞에 두면 이력을 받기 전이라 첫 조회 때 늘 판정 불가가 된다.
@@ -4050,6 +4084,9 @@ async function refreshWatchItem(w) {
       if (rb.profit > 0 && !w._rebuyFired) { w._rebuyFired = true; notifyRebuy(w, rb); }
       else if (w._rebuyFired && rb.profit <= 0) w._rebuyFired = false;
     }
+    // 발화 상태가 바뀌었을 때만 따로 저장한다 — saveWatchStateToStorage() 를 부르면 갱신
+    // 주기마다 서버 동기화가 예약돼 커밋이 쌓인다. 이건 localStorage 키 하나만 건드린다.
+    if (FIRED_KEYS.map(k => !!w[k]).join() !== firedBefore) saveFiredFlags();
 
     patchWatchItemDisplay(w.kind_id); // 가격/수량/갱신시각만 가볍게 텍스트 교체 (알림 발동으로 배지가 바뀌는 경우는 checkPriceAlerts가 이미 전체 재렌더링을 처리함)
 
@@ -4436,8 +4473,6 @@ function bandPosPct(w) {
   if (!c || w.price == null || w.soldOut) return null;
   return w.price / c * 100;
 }
-
-function avgIsStale(w) { return effectiveAvg(w).recalib; }
 
 // 감시 아이템의 추정에 쓸 7일(1시간봉) 이력이 없거나 1시간 넘게 오래됐으면 받아둔다.
 // daysSel 이 1일(10분봉)이면 72시간을 못 채우므로 여기서 따로 채운다. 요청은 큐가 속도를 맞춘다.

@@ -4165,7 +4165,7 @@ function countInfo(w) {
     return { text: base, color: 'var(--up)',
       title: `매물이 평소보다 넉넉해요 — 가격이 눌리기 쉬운 자리(살 때). ${tail}` };
   }
-  return { text: base, color: 'var(--dim)', title: `평소 수준이에요. ${tail}` };
+  return { text: base, color: 'var(--text)', title: `평소 수준이에요. ${tail}` };
 }
 
 // 평균가 입력칸을 펼쳐 둘지. 근거가 약할 때(⏰)만 기본으로 보여준다 —
@@ -4438,6 +4438,12 @@ function rebuyBadgeText(rb) {
     : { text: `재매입 ${lim} 이하`, color: 'var(--dim)' };
 }
 
+// 고점근접/저가 임계값(%)만 봐선 실제 얼마에 걸리는지 감이 안 와서, 지금 고점 기준
+// 실제 원화 가격을 같이 보여준다. 소수점은 버리고 반올림(예: 48의 70% → 34원).
+function pctToPriceText(ceiling, pct) {
+  return ceiling ? `${Math.round(ceiling * pct / 100).toLocaleString()}원` : '';
+}
+
 function computeBandBadge(w) {
   const pos = bandPosPct(w);
   if (pos === null) return null;
@@ -4538,11 +4544,15 @@ function patchWatchItemDisplay(kindId) {
     bandEl.style.display = b ? 'inline-block' : 'none';
     if (b) { bandEl.style.color = b.color; bandEl.title = b.tooltip; }
   }
+  const c = ceilingOf(w);
   const ceilEl = document.getElementById(`wCeil_${kindId}`);
   if (ceilEl) {
-    const c = ceilingOf(w);
     ceilEl.innerHTML = c ? `고점 <b style="color:var(--text);">${c.toLocaleString()}</b>` : '고점 —';
   }
+  const sellHighPriceEl = document.getElementById(`wSellHighPrice_${kindId}`);
+  if (sellHighPriceEl) sellHighPriceEl.textContent = `%↑${c ? ` (${pctToPriceText(c, w.sellHighPct || 90)})` : ''}`;
+  const buyLowPriceEl = document.getElementById(`wBuyLowPrice_${kindId}`);
+  if (buyLowPriceEl) buyLowPriceEl.textContent = `%↓${c ? ` (${pctToPriceText(c, w.buyLowPct || 60)})` : ''}`;
   const avgEl = document.getElementById(`wAvg_${kindId}`);
   if (avgEl) { avgEl.innerHTML = avgLine(w); avgEl.title = avgTitle(w); }
   const rbEl = document.getElementById(`wRebuy_${kindId}`);
@@ -4582,6 +4592,7 @@ function renderWatchList() {
     const depleteBadgeTxt = computeDepletionBadgeText(w);
     const bandBadge = computeBandBadge(w);
     const rbBadge = rebuyBadgeText(rebuyInfo(w));
+    const c = ceilingOf(w);
     return `
       <div class="watch-item-wrap" id="wRow_${w.kind_id}">
         <div class="watch-item">
@@ -4590,12 +4601,15 @@ function renderWatchList() {
           <span class="w-signal-primary" id="wBand_${w.kind_id}" title="${escHtml(bandBadge ? bandBadge.tooltip : '')}" style="color:${bandBadge ? bandBadge.color : 'var(--dim)'}; display:${bandBadge ? 'inline-block' : 'none'};">${bandBadge ? bandBadge.text : ''}</span>
           <span class="w-deplete" id="wDeplete_${w.kind_id}" style="display:${depleteBadgeTxt ? 'inline-block' : 'none'};">${depleteBadgeTxt || ''}</span>
         </div>
-        <div class="watch-item-extra" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
+        <div class="watch-item-extra" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--dim); padding:0 10px 2px; font-family:var(--mono);">
           <span class="w-count" id="wCount_${w.kind_id}" style="color:${countCell.color};" title="${escHtml(countCell.title)}">${countCell.text}</span>
           <span id="wAvg_${w.kind_id}" onclick="toggleAvgInput(${w.kind_id})" style="cursor:pointer;" title="${escHtml(avgTitle(w))}">${avgLine(w)}</span>
-          <span id="wCeil_${w.kind_id}">${ceilingOf(w) ? `고점 <b style="color:var(--text);">${ceilingOf(w).toLocaleString()}</b>` : '고점 —'}</span>
+          <span id="wCeil_${w.kind_id}">${c ? `고점 <b style="color:var(--text);">${c.toLocaleString()}</b>` : '고점 —'}</span>
           <span id="wRebuy_${w.kind_id}" style="color:${rbBadge.color};">${rbBadge.text}</span>
+        </div>
+        <div class="watch-item-extra" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
           <span id="wRange1h_${w.kind_id}">${range1hTxt}</span>
+          <span style="opacity:.5;">│</span>
           <span id="wRange24h_${w.kind_id}">${rangeTxt}</span>
         </div>
         <div class="watch-item-extra" id="wAvgEdit_${w.kind_id}" style="display:${avgNeedsInput(w) ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--dim); padding:0 10px 6px;">
@@ -4615,9 +4629,9 @@ function renderWatchList() {
         <div class="watch-item-toggles">
           <button class="ghost${w.listingDropAlert !== false ? ' toggle-on dropwarn' : ''}" onclick="toggleListingDropAlert(${w.kind_id})" title="${escHtml(scarceTitle(w))}">⚠ 품귀${w.listingDropAlert !== false ? ' 감지중' : ''}</button>
           <button class="ghost${w.sellHighAlert ? ' toggle-on sellhigh' : ''}" onclick="toggleSellHighAlert(${w.kind_id})" title="최저가가 고점의 N% 이상이면 알림 — 물량이 말랐으니 고점 근처에 걸어두면 팔려요">🔴 고점근접${w.sellHighAlert ? ' 감지중' : ''}</button>
-          ${w.sellHighAlert ? `<input type="number" min="50" max="100" step="1" value="${w.sellHighPct || 90}" title="고점의 몇 % 이상이면 팔 때로 볼지" onchange="setSellHighPct(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↑</span>` : ''}
+          ${w.sellHighAlert ? `<input type="number" min="50" max="100" step="1" value="${w.sellHighPct || 90}" title="고점의 몇 % 이상이면 팔 때로 볼지" onchange="setSellHighPct(${w.kind_id}, this.value)"><span class="hint" id="wSellHighPrice_${w.kind_id}" style="margin:0;">%↑${c ? ` (${pctToPriceText(c, w.sellHighPct || 90)})` : ''}</span>` : ''}
           <button class="ghost${w.buyLowAlert ? ' toggle-on buylow' : ''}" onclick="toggleBuyLowAlert(${w.kind_id})" title="최저가가 고점의 N% 이하면 알림 — 살 때예요">🟢 저가${w.buyLowAlert ? ' 감지중' : ''}</button>
-          ${w.buyLowAlert ? `<input type="number" min="10" max="90" step="1" value="${w.buyLowPct || 60}" title="고점의 몇 % 이하면 살 때로 볼지" onchange="setBuyLowPct(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↓</span>` : ''}
+          ${w.buyLowAlert ? `<input type="number" min="10" max="90" step="1" value="${w.buyLowPct || 60}" title="고점의 몇 % 이하면 살 때로 볼지" onchange="setBuyLowPct(${w.kind_id}, this.value)"><span class="hint" id="wBuyLowPrice_${w.kind_id}" style="margin:0;">%↓${c ? ` (${pctToPriceText(c, w.buyLowPct || 60)})` : ''}</span>` : ''}
           <button class="ghost${w.rebuyAlert ? ' toggle-on rebuy' : ''}" onclick="toggleRebuyAlert(${w.kind_id})" title="내 판매가의 85%(수수료 제외 실수령)보다 ${REBUY_MARGIN_PCT}% 이상 더 싸지면 알림 — 재매입해도 확실히 남는 구간">🔁 재매입${w.rebuyAlert ? ' 감지중' : ''}</button>
           ${w.rebuyAlert ? `<span class="hint" style="margin:0;">내 판매가</span><input type="number" min="0" step="any" value="${w.mySellPrice || ''}" placeholder="판 가격" style="width:80px;" title="내가 이 아이템을 판 가격 — 이 값의 85%에서 다시 ${REBUY_MARGIN_PCT}% 이상 싸져야 재매입 구간" onchange="setMySellPrice(${w.kind_id}, this.value)">` : ''}
         </div>` : ''}

@@ -4,3 +4,6 @@ alerts/state.json
 __pycache__/
 *.pyc
 alerts/.state_prev
+
+# 로컬 미리보기용 실행 설정 — 기기마다 다르므로 공유하지 않는다
+.claude/

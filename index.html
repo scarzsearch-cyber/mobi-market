@@ -130,7 +130,7 @@
   .axis-label-weekday{font-size:14px; font-weight:700; fill:#ffffff;}
   .grid-line{stroke:var(--line); stroke-width:1; opacity:0.8;}
   .zoom-box{fill:var(--accent); opacity:0.15; stroke:var(--accent); stroke-width:1; stroke-dasharray:3 2;}
-  #chartArea svg{touch-action:none;}
+  #chartArea svg{touch-action:pinch-zoom;} /* 한 손가락 드래그=구간 확대, 두 손가락=브라우저 핀치 확대 */
 
   .msg{color:var(--dim); font-size:14px; padding:40px 0; text-align:center;}
   .msg.error{color:var(--down);}
@@ -401,7 +401,7 @@
             <div class="faq-body">
               <p class="faq-lead">이 화면이 하는 일은 하나예요 — <b>지금 팔 때인지 살 때인지</b>를 알려주는 것.</p>
               <h4>천장이 뭔가요</h4>
-              <p>이 거래소는 12시간마다 최근 3일 평균가를 다시 재고, <b>판매 가격의 상한(천장) = 평균 × 1.5</b> 예요.
+              <p>이 거래소는 <b>매일 아침 6시와 저녁 6시</b>에 최근 3일 평균가를 다시 재고, <b>판매 가격의 상한(천장) = 평균 × 1.5</b> 예요.
               가격은 이 천장을 절대 못 넘습니다. 그래서 <b>“지금 최저가가 천장의 몇 %인가”</b>가 싸다·비싸다를 재는 유일하게 정확한 잣대예요.</p>
               <h4>카드에 뜨는 신호</h4>
               <ul class="faq-list">
@@ -420,6 +420,11 @@
               <h4>평균가는 안 넣어도 되나요</h4>
               <p>네. 앱과 서버가 스스로 추정하고, 물량이 마른 순간을 잡아 스스로 보정해요.
               카드에 <b>⏰</b> 가 떴을 때만 게임의 평균 판매가를 한 번 넣어주시면 그때부터 더 정확해집니다.</p>
+              <p>넣을수록 <b>정말로 정확해져요.</b> 넣은 값과 앱의 추정치가 얼마나 어긋났는지를 계수로 기억해 두고,
+              다음부터 그만큼 보정합니다. 한 번 이상한 순간에 넣어도 그 값이 전부가 되지 않게 <b>절반씩만</b> 반영하니,
+              여러 번 넣을수록 실제 값으로 수렴해요. 배운 계수는 <b>폰과 PC가 같이 씁니다.</b></p>
+              <p>넣기 좋은 때는 <b>아침 6시·저녁 6시 직후</b>예요 — 그때 게임이 새 평균을 매기니까,
+              직전에 넣은 값은 금방 낡습니다. 앱도 그 시각을 기준으로 낡음을 판단해요.</p>
               <h4>탭을 닫아도 돼요</h4>
               <p>서버가 10분마다 따로 감시해서 조건이 맞으면 카카오톡으로 보내요. 컴퓨터를 꺼도 폰으로 옵니다.
               탭을 열어두면 그 위에 브라우저 알림·소리가 더 빨리 붙고 카드 숫자도 실시간으로 갱신돼요.</p>
@@ -1420,7 +1425,7 @@ function migrateBandDefaults() {
 window.addEventListener('DOMContentLoaded', () => {
   // 새로고침(F5)해도 API 키·감시 목록·알림·마지막 검색 상태가 남아있도록 먼저 복원한다.
   // ★ 예전엔 이 세 줄이 스크립트 최상단(top-level)에서 곧바로 실행됐다 — 스크립트가 위에서
-  // 아래로 실행되는 도중이라, 그 시점엔 이 파일 뒤쪽에 선언된 const(예: AVG_STALE_MS·
+  // 아래로 실행되는 도중이라, 그 시점엔 이 파일 뒤쪽에 선언된 const(예: CEILING_MULT·
   // apiQueue)가 아직 초기화되지 않은 상태다. 감시 목록에 평균가(avgPrice)가 하나라도
   // 저장돼 있으면 renderWatchList() → effectiveAvg()가 그 const를 참조하다 TDZ
   // ReferenceError로 죽었고, 최상위 코드가 그 지점에서 멈추니 DOMContentLoaded 리스너
@@ -2301,6 +2306,19 @@ function saveMaPref() {
   if (basePoints.length) renderChartForSelection();
 }
 
+// 차트 폭이 실제 컨테이너를 따라가므로, 창 크기·브라우저 배율이 바뀌면 다시 그려야 한다.
+// 폭이 실제로 달라졌을 때만 — 모바일에서 주소창이 접히며 나는 높이 변화로는 그리지 않는다.
+let lastChartW = 0;
+window.addEventListener('resize', () => {
+  const host = document.getElementById('chartArea');
+  if (!host || !basePoints.length) return;
+  const w = host.clientWidth;
+  if (!w || Math.abs(w - lastChartW) < 8) return;
+  lastChartW = w;
+  clearTimeout(window._chartResizeTimer);
+  window._chartResizeTimer = setTimeout(() => { if (basePoints.length) renderChartForSelection(); }, 150);
+});
+
 function saveMaStyle() {
   const style = {
     hmaWidth: parseFloat(document.getElementById('maStyleHmaWidth').value) || 4,
@@ -2330,8 +2348,18 @@ function drawCandles(rawPoints, min, max) {
     return;
   }
 
-  const W = 880, H = 520, padL = 60, padR = 60, padT = 16, padB = 48; // padB: 날짜+시간 / 요일 두 줄 라벨을 위해 확보
-  const volH = 64, volGap = 8; // 체결 건수 바 차트용 하단 공간
+  // 차트 크기 — SVG 1 단위 = 화면 1 CSS 픽셀이 되도록 컨테이너 실제 폭을 재서 viewBox 를 만든다.
+  // 종전에는 W=880/H=520 고정에 CSS 가 width:100% 라 두 가지가 같이 망가져 있었다.
+  //   ① 좁은 창에서는 축 글자(12 단위)가 화면에서 5px 로 뭉개졌다 — 폰에서 눈금을 못 읽었다.
+  //   ② 브라우저 배율을 내려도 컨테이너가 그만큼 넓어져 차트만 원래 크기로 남았다.
+  //      (다른 글자는 줄어드는데 차트만 안 줄어서 "배율 조절이 막혀 있다"고 보이던 원인)
+  // 높이는 CSS 픽셀 고정값이라 배율을 그대로 탄다 — 시계열 차트는 폭을 채우고 높이는 고정이 맞다.
+  const host = document.getElementById('chartArea');
+  const W = Math.max(240, Math.round(host.clientWidth || 880)); // 240 은 폭이 이상하게 잡혔을 때의 최소 방어값
+  const H = (W < 520) ? 300 : 380;
+  const narrow = W < 520;
+  const padL = narrow ? 52 : 60, padR = narrow ? 22 : 60, padT = 16, padB = 48; // padB: 날짜+시간 / 요일 두 줄 라벨을 위해 확보
+  const volH = narrow ? 52 : 64, volGap = 8; // 체결 건수 바 차트용 하단 공간
   const plotW = W - padL - padR, plotH = H - padT - padB - volH - volGap;
   const volY0 = padT + plotH + volGap; // 거래량 패널 시작 y
   const volY1 = volY0 + volH;          // 거래량 패널 바닥 y (기준선)
@@ -2590,7 +2618,7 @@ function attachZoomDrag() {
   const svgEl = document.querySelector('#chartArea svg');
   if (!svgEl || !currentChart) return;
   svgEl.style.cursor = 'default';
-  svgEl.style.touchAction = 'none'; // 차트 위에서 드래그하는 동안 페이지 스크롤 방지
+  svgEl.style.touchAction = 'pinch-zoom'; // 한 손가락 드래그 중엔 페이지 스크롤 방지, 두 손가락 핀치 확대는 허용
 
   let dragStart = null;
   let longPressTimer = null;
@@ -3620,7 +3648,7 @@ function setAvgPrice(kindId, val) {
     w.avgPrice = n; w.avgPriceAt = Date.now();
     // 보정 계수 학습: 게임 값 ÷ 지금 추정치. 추정이 없으면(이력 미수신) 계수는 다음 기회에.
     const { est } = estimateAvgFromHistory(kindId);
-    if (est > 0) { w.avgRatio = n / est; w.avgRatioAt = Date.now(); w.avgRatioSrc = 'manual'; }
+    if (est > 0) { w.avgRatio = blendRatio(w.avgRatio, n / est); w.avgRatioAt = Date.now(); w.avgRatioSrc = 'manual'; }
   } else { w.avgPrice = null; w.avgPriceAt = null; w.avgRatio = null; w.avgRatioAt = null; w.avgRatioSrc = null; }
   w._sellHighFired = false; w._buyLowFired = false;
   saveWatchStateToStorage();
@@ -4362,13 +4390,50 @@ const PERCENTILE_WINDOW_DAYS = 7; // 이보다 오래된 시세는 완전히 제
 const SELL_FEE_PCT = 15; // 판매 수수료 — 제작 계산기·되사기 손익 계산에 쓴다
 
 // ---- 천장 기준 신호 (v2) ----
-// 이 거래소는 12시간마다 3일 거래 평균가를 재고, 판매가 상한 = 평균 x 1.5 다
+// 이 거래소는 매일 06:00·18:00 KST 에 3일 거래 평균가를 재고, 판매가 상한 = 평균 x 1.5 다
 // (소유자 실측 4건: 삼림 22→33, 용비늘 289346→434019 는 정수까지 정확). 가격은 이 천장을
 // 못 넘으므로 "지금 최저가가 천장의 몇 %인가"가 싸다/비싸다의 유일하게 정확한 잣대다.
 // 평균가는 API 로 재현이 안 된다 — API 는 최저 매물만 기록하고 게임은 실제 체결가를
 // 평균내서 아이템에 따라 15% 까지 어긋난다(alerts/calibrate_avg.py). 그래서 사람이 입력한다.
 const CEILING_MULT = 1.5;
-const AVG_STALE_MS = 12 * 60 * 60 * 1000; // 게임 갱신 주기 — 이보다 오래된 입력은 낡았다고 표시
+
+// ---- 평균가가 다시 매겨지는 시각: 매일 06:00 · 18:00 KST (소유자 실측 2026-09-04) ----
+// 종전에는 "입력한 지 12시간"이라는 슬라이딩 창으로 낡음을 쟀다. 그건 갱신 시각을 몰랐을 때의
+// 대용품이었고, 실제 시각을 알고 나면 두 군데가 틀린다:
+//   ① 17:50 에 넣은 값은 10분 뒤 갱신되면서 곧바로 낡는데, 슬라이딩 창은 그 뒤 11시간 50분
+//      동안 "아직 싱싱함"으로 보고 옛 평균으로 천장을 계산한다.
+//   ② 06:10 에 넣은 값은 18:00 까지 유효한데 18:10 까지 유효하다고 본다.
+// 그래서 유효기간을 "다음 갱신 시각까지"로 바꾼다. 규약은 alerts/watch.py 와 반드시 같아야 한다.
+const AVG_RESET_HOURS_KST = [6, 18];
+// KST_OFFSET_MS 는 이 파일 위쪽(시각 표시용)에 이미 있다 — 다시 선언하면 스크립트 전체가 죽는다.
+
+// 지금 걸려 있는 평균가가 매겨진 시각(직전 06:00 또는 18:00 KST)의 epoch ms.
+function lastAvgResetMs(now) {
+  const k = new Date((now || Date.now()) + KST_OFFSET_MS); // UTC 필드를 읽으면 그게 곧 KST 벽시계
+  const midnight = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) - KST_OFFSET_MS;
+  const passed = AVG_RESET_HOURS_KST.filter(h => h <= k.getUTCHours());
+  if (!passed.length) return midnight - 86400000 + AVG_RESET_HOURS_KST[AVG_RESET_HOURS_KST.length - 1] * 3600000;
+  return midnight + Math.max.apply(null, passed) * 3600000;
+}
+// 다음 갱신 시각 — 화면에 "언제 새 평균이 오는지" 한 줄로 보여주는 데 쓴다.
+function nextAvgResetMs(now) {
+  const k = new Date((now || Date.now()) + KST_OFFSET_MS);
+  const midnight = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) - KST_OFFSET_MS;
+  const upcoming = AVG_RESET_HOURS_KST.filter(h => h > k.getUTCHours());
+  if (!upcoming.length) return midnight + 86400000 + AVG_RESET_HOURS_KST[0] * 3600000;
+  return midnight + Math.min.apply(null, upcoming) * 3600000;
+}
+
+// 보정 계수를 배우는 법 — 마지막 값으로 덮어쓰지 않고 절반씩 당긴다(지수 평활).
+// 덮어쓰기였을 때는 어쩌다 이상한 순간에 넣은 값 하나가 그대로 계수가 돼서, 몇 번을 더 넣어도
+// "점점 정확해지는" 일이 없었다(마지막 한 번이 언제나 전부였다). 절반씩 당기면 튄 값은 절반만
+// 먹고 이어지는 입력들이 되돌린다 — 넣을수록 실제로 수렴한다.
+const RATIO_LEARN_ALPHA = 0.5;
+function blendRatio(oldRatio, sample) {
+  if (!(sample > 0)) return null;
+  if (!(oldRatio > 0)) return sample;
+  return oldRatio * (1 - RATIO_LEARN_ALPHA) + sample * RATIO_LEARN_ALPHA;
+}
 
 // ---- 평균가: 자동 추정 + 자동보정(plateau) + 보정 계수 + 관측 하한 ----
 // 게임 평균은 API 로 정확히 재현되지 않는다(체결가 vs 최저 매물, 아이템별 최대 15% 차이).
@@ -4382,7 +4447,7 @@ const AVG_STALE_MS = 12 * 60 * 60 * 1000; // 게임 갱신 주기 — 이보다 
 //   ③ 보정 계수: 사용자가 게임 평균을 입력하거나 ②가 잡힐 때 (평균 ÷ 추정) 을 저장해 두고
 //      다음부터 추정 × 계수를 쓴다.
 //   ④ 관측 하한: 최근 6시간 max(high) ÷ 1.5 는 평균의 확실한 하한. 추정이 그 밑이면 끌어올린다.
-// 우선순위: 12시간 안 입력 > 자동보정 > 추정×계수 > 미보정 추정 > 옛 입력. 하한은 항상 적용.
+// 우선순위: 직전 갱신(06/18시) 뒤 입력 > 자동보정 > 추정×계수 > 미보정 추정 > 옛 입력. 하한은 항상 적용.
 // ⏰ 는 근거가 없을 때(미보정)나 하한에 걸렸을 때만 — 타이머로 재촉하지 않는다.
 const EST_WINDOW_H = 72;
 const EST_FLOOR_WINDOW_H = 6;
@@ -4404,7 +4469,9 @@ function estimateAvgFromHistory(kindId) {
   const kindCache = historyCacheByKind[kindId];
   if (!kindCache) return { est: null, floorAvg: null, plateauAvg: null, n: 0 };
   const now = Date.now();
-  const t0 = now - EST_WINDOW_H * 3600000, tf = now - EST_FLOOR_WINDOW_H * 3600000, tp = now - EST_PLATEAU_WINDOW_H * 3600000;
+  const anchor = lastAvgResetMs(now); // 지금 걸려 있는 평균이 매겨진 시각
+  const t0 = anchor - EST_WINDOW_H * 3600000; // 그 평균이 실제로 본 3일 창의 시작
+  const tf = now - EST_FLOOR_WINDOW_H * 3600000, tp = now - EST_PLATEAU_WINDOW_H * 3600000;
   let best = null;
   for (const e of Object.values(kindCache)) {
     const pts = (e && e.histData && e.histData.points) || [];
@@ -4412,12 +4479,20 @@ function estimateAvgFromHistory(kindId) {
     if (!best || win.length > best.length) best = win;
   }
   if (!best || best.length < EST_MIN_POINTS) return { est: null, floorAvg: null, plateauAvg: null, n: best ? best.length : 0 };
+  // ★ 추정 창의 끝은 "지금"이 아니라 "직전 갱신 시각"이다. 갱신 뒤에 일어난 거래는 지금 걸려
+  //   있는 평균에 아직 반영되지 않았으므로, 넣으면 게임이 보지도 않은 값으로 게임 평균을
+  //   흉내내게 된다. 창을 맞추면 추정이 12시간 동안 고정돼서 실제 평균과 같은 계단이 되고,
+  //   그래야 계수(입력 ÷ 추정)가 매번 같은 것을 재는 값이 된다 — 계수가 수렴하는 전제.
+  //   이력이 짧은 새 아이템이라 표본이 모자라면 종전대로 지금까지의 창으로 물러선다.
+  const aligned = best.filter(p => new Date(p.time).getTime() <= anchor);
+  const estWin = (aligned.length >= EST_MIN_POINTS) ? aligned : best;
   let wsum = 0, psum = 0;
-  for (const p of best) {
+  for (const p of estWin) {
     const sold = Math.max(0, (p.count_open || 0) - (p.count_close || 0));
     wsum += sold; psum += p.close * sold;
   }
-  const est = wsum > 0 ? psum / wsum : best.reduce((a, p) => a + p.close, 0) / best.length;
+  const est = wsum > 0 ? psum / wsum : estWin.reduce((a, p) => a + p.close, 0) / estWin.length;
+  // 하한·plateau 는 "지금 천장이 어디냐"를 눈으로 관측하는 값이라 기준이 현재다 — 창을 옮기지 않는다.
   const recent = best.filter(p => p.high != null && new Date(p.time).getTime() >= tf);
   const floorAvg = recent.length ? Math.max(...recent.map(p => p.high)) / CEILING_MULT : null;
   // plateau 자동보정
@@ -4434,13 +4509,13 @@ function estimateAvgFromHistory(kindId) {
       plateauAvg = implied;
     }
   }
-  return { est, floorAvg, plateauAvg, n: best.length };
+  return { est, floorAvg, plateauAvg, n: estWin.length };
 }
 
 // 지금 이 아이템에 쓸 평균가와 그 출처. { avg, source, recalib, est, floorAvg, plateauAvg }
 function effectiveAvg(w) {
   const { est, floorAvg, plateauAvg } = estimateAvgFromHistory(w.kind_id);
-  const typedFresh = w.avgPrice > 0 && w.avgPriceAt && (Date.now() - w.avgPriceAt) <= AVG_STALE_MS;
+  const typedFresh = w.avgPrice > 0 && w.avgPriceAt && w.avgPriceAt >= lastAvgResetMs();
   let avg = null, source = null, recalib = false;
   if (typedFresh) { avg = w.avgPrice; source = '입력'; }
   else if (plateauAvg) { avg = plateauAvg; source = '자동'; }
@@ -4461,7 +4536,7 @@ function learnRatioFromPlateau(w) {
   if (!(plateauAvg > 0) || !(est > 0)) return false;
   const ratio = plateauAvg / est;
   if (w.avgRatio > 0 && Math.abs(ratio / w.avgRatio - 1) < 0.05) return false;
-  w.avgRatio = ratio; w.avgRatioAt = Date.now(); w.avgRatioSrc = 'auto';
+  w.avgRatio = blendRatio(w.avgRatio, ratio); w.avgRatioAt = Date.now(); w.avgRatioSrc = 'auto';
   saveWatchStateToStorage();
   return true;
 }
@@ -4480,9 +4555,19 @@ function avgTitle(w) {
   if (ea.plateauAvg) parts.push(`자동보정: 최근 12h 물량이 마른 시간대에 최저가가 ${Math.round(ea.plateauAvg * CEILING_MULT).toLocaleString()} 에 머물렀어요 — 그게 천장`);
   if (w.avgRatio > 0) parts.push(`보정 계수 ×${w.avgRatio.toFixed(3)} (${w.avgRatioSrc === 'auto' ? '자동 학습' : '입력'}${w.avgRatioAt ? ', ' + timeAgoText(w.avgRatioAt).replace(' 갱신', ' 전') : ''})`);
   if (w.avgPrice > 0 && w.avgPriceAt) parts.push(`마지막 입력 ${Math.round(w.avgPrice).toLocaleString()} (${timeAgoText(w.avgPriceAt).replace(' 갱신', ' 전')})`);
+  parts.push(nextAvgResetText());
   if (ea.floorAvg) parts.push(`관측 하한 ${Math.round(ea.floorAvg).toLocaleString()} (최근 6h max(high)÷1.5 — 천장은 이보다 낮을 수 없음)`);
   if (ea.recalib) parts.push('⏰ 아직 근거가 약해요 — 물량이 한 번 마르면 자동으로 잡히고, 게임 평균을 입력해도 돼요.');
   return parts.join(String.fromCharCode(10));
+}
+
+// "다음 평균은 언제 오나" 한 문장 — 평균가 툴팁과 입력칸 안내가 같은 문장을 쓴다.
+function nextAvgResetText() {
+  const ms = nextAvgResetMs() - Date.now();
+  const h = Math.floor(ms / 3600000), m = Math.round((ms % 3600000) / 60000);
+  const at = new Date(nextAvgResetMs() + KST_OFFSET_MS).getUTCHours();
+  const left = h > 0 ? `${h}시간 ${m}분` : `${m}분`;
+  return `게임이 평균가를 다시 매기는 시각은 아침 6시·저녁 6시예요 — 다음 갱신은 ${at}시(${left} 뒤).`;
 }
 
 function ceilingOf(w) {
@@ -4681,8 +4766,8 @@ function renderWatchList() {
           <span id="wRange24h_${w.kind_id}">${rangeTxt}</span>
         </div>
         <div class="watch-item-extra" id="wAvgEdit_${w.kind_id}" style="display:${avgNeedsInput(w) ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--dim); padding:0 10px 6px;">
-          <input type="number" min="0" step="any" value="" placeholder="게임 평균 판매가" style="width:130px; padding:3px 6px; font-size:11.5px;" onchange="setAvgPrice(${w.kind_id}, this.value); this.value='';" title="게임에서 보이는 '평균 판매가'를 넣으면 추정 오차를 학습해요. 한 번이면 됩니다.">
-          <span class="hint" style="margin:0;">넣으면 천장이 정확해져요</span>
+          <input type="number" min="0" step="any" value="" placeholder="게임 평균 판매가" style="width:130px; padding:3px 6px; font-size:11.5px;" onchange="setAvgPrice(${w.kind_id}, this.value); this.value='';" title="게임에서 보이는 '평균 판매가'를 넣으면 추정 오차를 계수로 학습해요. 넣을 때마다 절반씩 반영해서 넣을수록 정확해집니다. 게임은 아침 6시·저녁 6시에 평균을 다시 매기니 그 직후에 넣는 게 가장 좋아요.">
+          <span class="hint" style="margin:0;">넣을수록 정확해져요</span>
         </div>
         <div class="watch-item-quickbtns">
           <button class="ghost${isFocus ? ' toggle-on' : ''}" onclick="toggleFocusWatch(${w.kind_id})" title="집중 감시 — 최대 ${FOCUS_MAX_ITEMS}개까지 동시에 ${FOCUS_INTERVAL_MS / 1000}초마다 갱신 (현재 ${focusKindIds.size}/${FOCUS_MAX_ITEMS})">🎯 ${isFocus ? '빠른갱신 중' : '빠른갱신'}</button>

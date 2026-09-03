@@ -147,7 +147,7 @@ def fetch_history(pool, kind_id, days=7):
 # ---------------------------------------------------------------- 평균가 추정 (index.html effectiveAvg 와 같은 규약)
 
 # 게임 평균은 API 로 정확히 재현되지 않는다(체결가 vs 최저 매물, 아이템별 최대 15% 차이).
-# 네 겹: ① 72h 종가를 팔린 수량으로 가중 평균 ② plateau 자동보정 — 최근 12h max(high) 에
+# 네 겹: ① 직전 갱신 시각까지의 72h 종가를 팔린 수량으로 가중 평균 ② plateau 자동보정 — 최근 12h max(high) 에
 # 3캔들 이상 머물렀고 그 시간대 수량이 창 중앙값의 절반 이하(=정말 말랐다)이며 역산 평균이
 # 추정의 0.75~1.3 배 안이면 그 값을 평균으로 채택하고 계수를 학습 ③ 저장된 보정 계수를 곱한다
 # ④ 최근 6h max(high)/1.5 는 평균의 확실한 하한이라 그 밑이면 끌어올린다.
@@ -168,7 +168,45 @@ PCTL_WINDOW_DAYS = 7
 COUNT_MIN_SAMPLES = 12
 SCARCE_ENTER_PCTL = 20
 SCARCE_EXIT_PCTL = 40
-AVG_STALE_SEC = 12 * 3600
+
+# ---- 평균가가 다시 매겨지는 시각: 매일 06:00 · 18:00 KST (소유자 실측 2026-09-04) ----
+# ★ index.html 의 AVG_RESET_HOURS_KST / lastAvgResetMs 와 반드시 같아야 한다.
+# 종전에는 "입력한 지 12시간"이라는 슬라이딩 창이었다. 실제 갱신 시각을 알고 나면 그건 틀린다 —
+# 17:50 에 넣은 값은 10분 뒤 갱신되며 낡는데 슬라이딩 창은 11시간 50분을 더 싱싱하다고 본다.
+AVG_RESET_HOURS_KST = (6, 18)
+KST = timezone(timedelta(hours=9))
+
+
+def last_avg_reset(now_ts):
+    """지금 걸려 있는 평균가가 매겨진 시각(직전 06:00 또는 18:00 KST)의 epoch 초."""
+    k = datetime.fromtimestamp(now_ts, KST)
+    midnight = k.replace(hour=0, minute=0, second=0, microsecond=0)
+    passed = [h for h in AVG_RESET_HOURS_KST if h <= k.hour]
+    if not passed:
+        return (midnight - timedelta(days=1)).timestamp() + AVG_RESET_HOURS_KST[-1] * 3600
+    return midnight.timestamp() + max(passed) * 3600
+
+
+def next_avg_reset(now_ts):
+    """다음 갱신 시각의 epoch 초."""
+    k = datetime.fromtimestamp(now_ts, KST)
+    midnight = k.replace(hour=0, minute=0, second=0, microsecond=0)
+    upcoming = [h for h in AVG_RESET_HOURS_KST if h > k.hour]
+    if not upcoming:
+        return (midnight + timedelta(days=1)).timestamp() + AVG_RESET_HOURS_KST[0] * 3600
+    return midnight.timestamp() + min(upcoming) * 3600
+
+
+# 계수는 마지막 값으로 덮어쓰지 않고 절반씩 당긴다 — index.html 의 RATIO_LEARN_ALPHA 와 같아야 한다.
+RATIO_LEARN_ALPHA = 0.5
+
+
+def blend_ratio(old_ratio, sample):
+    if not sample or sample <= 0:
+        return None
+    if not old_ratio or old_ratio <= 0:
+        return sample
+    return old_ratio * (1 - RATIO_LEARN_ALPHA) + sample * RATIO_LEARN_ALPHA
 
 
 def _ts(s):
@@ -182,18 +220,25 @@ def _median(xs):
 
 def estimate_avg(points, now_ts):
     """(추정 평균, 관측 하한, plateau 평균, 표본 수). 부족하면 (None, None, None, n)."""
-    t0 = now_ts - EST_WINDOW_H * 3600
+    anchor = last_avg_reset(now_ts)          # 지금 걸려 있는 평균이 매겨진 시각
+    t0 = anchor - EST_WINDOW_H * 3600        # 그 평균이 실제로 본 3일 창의 시작
     tf = now_ts - EST_FLOOR_WINDOW_H * 3600
     tp = now_ts - EST_PLATEAU_WINDOW_H * 3600
     win = [p for p in (points or []) if p.get("close") is not None and p.get("time") and _ts(p["time"]) >= t0]
     if len(win) < EST_MIN_POINTS:
         return None, None, None, len(win)
+    # ★ 추정 창의 끝은 "지금"이 아니라 "직전 갱신 시각"이다 — 갱신 뒤 거래는 지금 걸려 있는
+    #   평균에 아직 반영되지 않았다. 창을 맞추면 추정이 12시간 동안 고정돼 실제 평균과 같은
+    #   계단이 되고, 계수(입력÷추정)가 매번 같은 것을 재는 값이 된다. 표본이 모자라면 물러선다.
+    aligned = [p for p in win if _ts(p["time"]) <= anchor]
+    est_win = aligned if len(aligned) >= EST_MIN_POINTS else win
     wsum = psum = 0.0
-    for p in win:
+    for p in est_win:
         sold = max(0, (p.get("count_open") or 0) - (p.get("count_close") or 0))
         wsum += sold
         psum += p["close"] * sold
-    est = psum / wsum if wsum > 0 else sum(p["close"] for p in win) / len(win)
+    est = psum / wsum if wsum > 0 else sum(p["close"] for p in est_win) / len(est_win)
+    # 하한·plateau 는 "지금 천장이 어디냐"를 관측하는 값이라 기준이 현재다 — 창을 옮기지 않는다.
     recent = [p["high"] for p in win if p.get("high") is not None and _ts(p["time"]) >= tf]
     floor_avg = (max(recent) / CEILING_MULT) if recent else None
     plateau_avg = None
@@ -208,7 +253,7 @@ def estimate_avg(points, now_ts):
                 and med_plat / med_all <= PLATEAU_COUNT_RATIO_MAX
                 and est > 0 and PLATEAU_BAND[0] <= implied / est <= PLATEAU_BAND[1]):
             plateau_avg = implied
-    return est, floor_avg, plateau_avg, len(win)
+    return est, floor_avg, plateau_avg, len(est_win)
 
 
 def count_percentile(points, count, now_ts):
@@ -250,13 +295,13 @@ def pick_ratio(w, learned):
 
 
 def effective_avg(w, est, floor_avg, plateau_avg, now_ts, learned=None):
-    """우선순위: 12h 안 입력값 > plateau 자동보정 > 추정×계수 > 미보정 추정 > 옛 입력. 하한은 항상.
+    """우선순위: 직전 갱신(06/18시 KST) 뒤 입력값 > plateau 자동보정 > 추정×계수 > 미보정 추정 > 옛 입력. 하한은 항상.
     반환 (avg, source, recalib). recalib 는 근거가 약할 때(미보정·하한)만 True."""
     typed = w.get("avgPrice")
     typed_at = (w.get("avgPriceAt") or 0) / 1000.0
     ratio = pick_ratio(w, learned)
     avg = None; source = None; recalib = False
-    if typed and typed > 0 and typed_at and (now_ts - typed_at) <= AVG_STALE_SEC:
+    if typed and typed > 0 and typed_at and typed_at >= last_avg_reset(now_ts):
         avg, source = typed, "입력"
     elif plateau_avg:
         avg, source = plateau_avg, "자동"
@@ -636,7 +681,7 @@ def main():
                 # plateau 가 잡히면 계수를 학습해 state 에 남긴다 — 물량이 풀려도 보정이 남는다.
                 r = plateau_avg / est
                 if not learned.get("ratio") or abs(r / learned["ratio"] - 1) >= 0.05:
-                    learned = {"ratio": r, "ratioAt": now, "src": "auto"}
+                    learned = {"ratio": blend_ratio(learned.get("ratio"), r), "ratioAt": now, "src": "auto"}
             avg, source, recalib = effective_avg(w, est, floor_avg, plateau_avg, now, learned)
             if avg:
                 w_eff["avgPrice_effective"] = avg

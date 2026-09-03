@@ -294,6 +294,92 @@ check("src 기본값 auto", pub["222"]["src"], "auto")
 with io.open(watch.LEARNED_PATH, encoding="utf-8") as _f:
     check("파일로도 같은 내용이 써진다", _json.load(_f), pub)
 check("학습이 하나도 없으면 빈 객체", watch.save_learned({"1": {"fired": {}}}), {})
+print("")
+print("[17] 평균가 갱신 시각 — 매일 06:00 / 18:00 KST")
+# 게임이 평균을 다시 매기는 시각(소유자 실측 2026-09-04). "입력 후 12시간" 슬라이딩 창을 대체한다.
+# ★ index.html 의 lastAvgResetMs / nextAvgResetMs 와 반드시 같은 값이어야 한다 —
+#   어긋나면 화면과 카톡이 서로 다른 천장을 말한다.
+from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+_KST = _tz(_td(hours=9))
+
+
+def _kst(txt):
+    return _dt.fromisoformat(txt).replace(tzinfo=_KST).timestamp()
+
+
+def _hhmm(ts):
+    return _dt.fromtimestamp(ts, _KST).strftime("%m-%d %H:%M")
+
+
+for _at, _last, _next in [
+    ("2026-09-04 05:59", "09-03 18:00", "09-04 06:00"),  # 새벽 — 직전 갱신은 어제 저녁
+    ("2026-09-04 06:00", "09-04 06:00", "09-04 18:00"),  # 경계 정각은 새 창에 들어간다
+    ("2026-09-04 12:00", "09-04 06:00", "09-04 18:00"),
+    ("2026-09-04 17:59", "09-04 06:00", "09-04 18:00"),
+    ("2026-09-04 18:00", "09-04 18:00", "09-05 06:00"),
+    ("2026-09-05 00:00", "09-04 18:00", "09-05 06:00"),  # 자정을 넘어도 어제 저녁 값이 유효
+]:
+    _t = _kst(_at)
+    check(_at + " 직전 갱신", _hhmm(watch.last_avg_reset(_t)), _last)
+    check(_at + " 다음 갱신", _hhmm(watch.next_avg_reset(_t)), _next)
+
+# 입력값의 유효기간이 "12시간"이 아니라 "다음 갱신까지"라는 것이 이 변경의 핵심.
+# 17:50 입력은 18:00 갱신으로 낡는다 — 슬라이딩 12시간이면 다음날 05:50 까지 싱싱하다고 봤다.
+_w_late = {"avgPrice": 100, "avgPriceAt": int(_kst("2026-09-04 17:50") * 1000)}
+check("17:50 입력은 17:55 에 아직 유효",
+      watch.effective_avg(_w_late, None, None, None, _kst("2026-09-04 17:55"))[:2], (100, "입력"))
+check("같은 값이 18:05 에는 낡는다",
+      watch.effective_avg(_w_late, None, None, None, _kst("2026-09-04 18:05"))[:2], (100, "옛입력"))
+check("종전 규칙이면 아직 싱싱했을 11시간 뒤에도 낡은 채",
+      watch.effective_avg(_w_late, None, None, None, _kst("2026-09-05 05:00"))[1], "옛입력")
+
+# 06:10 입력은 18:00 까지 살아 있다 — 경계 직후 입력이 가장 오래 간다.
+_w_early = {"avgPrice": 100, "avgPriceAt": int(_kst("2026-09-04 06:10") * 1000)}
+check("06:10 입력은 17:59 까지 유효",
+      watch.effective_avg(_w_early, None, None, None, _kst("2026-09-04 17:59"))[1], "입력")
+check("06:10 입력도 18:01 엔 낡는다",
+      watch.effective_avg(_w_early, None, None, None, _kst("2026-09-04 18:01"))[1], "옛입력")
+
+print("")
+print("[18] 추정 창이 직전 갱신 시각에서 끊긴다")
+# 갱신 뒤에 일어난 거래는 지금 걸려 있는 평균에 아직 반영되지 않았다. 창에 넣으면 게임이
+# 보지도 않은 값으로 게임 평균을 흉내내게 되고, 추정이 12시간 내내 흘러서 계수가 수렴하지 않는다.
+_now18 = _kst("2026-09-04 12:00")     # 직전 갱신 = 09-04 06:00
+_anchor = watch.last_avg_reset(_now18)
+
+
+def _pt(ts, close):
+    return {"time": _dt.fromtimestamp(ts, _tz.utc).isoformat().replace("+00:00", "Z"),
+            "close": close, "high": close, "count_open": 10, "count_close": 9}
+
+
+# 갱신 전 8시간은 100원, 갱신 후 5시간은 200원에 거래됐다고 하자.
+_before = [_pt(_anchor - h * 3600, 100) for h in range(1, 9)]
+_after = [_pt(_anchor + h * 3600, 200) for h in range(1, 6)]
+_est18, _fl18, _pl18, _n18 = watch.estimate_avg(_before + _after, _now18)
+check("갱신 뒤 거래는 추정에서 빠진다", round(_est18, 1), 100.0)
+check("표본 수도 갱신 전 것만", _n18, 8)
+# 표본이 모자라면 물러선다 — 이력이 짧은 새 아이템이 판정 불가가 되지 않게.
+_est19, _, _, _n19 = watch.estimate_avg([_pt(_anchor - 3600, 100)] + _after, _now18)
+check("갱신 전 표본이 6개 미만이면 지금까지의 창으로 물러섬", _n19, 6)
+
+print("")
+print("[19] 보정 계수는 덮어쓰지 않고 절반씩 당긴다")
+# 덮어쓰기였을 때는 어쩌다 이상한 순간에 배운 값 하나가 그대로 계수가 됐다 — 몇 번을 더
+# 배워도 "점점 정확해지는" 일이 없었다(마지막 한 번이 언제나 전부였다).
+check("처음 배우는 값은 그대로", watch.blend_ratio(None, 1.20), 1.20)
+check("0 은 계수가 아니다", watch.blend_ratio(1.0, 0), None)
+check("기존 1.0 에 1.2 를 배우면 절반인 1.1", round(watch.blend_ratio(1.0, 1.20), 4), 1.10)
+_r = None
+for _ in range(6):
+    _r = watch.blend_ratio(_r, 1.20)
+check("같은 값을 반복해 배우면 그 값으로 수렴", round(_r, 3), 1.2)
+_r = watch.blend_ratio(1.20, 3.00)          # 한 번 크게 튄 값
+check("튄 값 하나는 절반만 먹는다", round(_r, 3), 2.1)
+for _ in range(5):
+    _r = watch.blend_ratio(_r, 1.20)
+check("이어지는 정상 입력이 되돌린다", round(_r, 2), 1.23)
 
 print("\n" + ("─" * 50))
 print("❌ 실패 " + str(len(fails)) + "건: " + ", ".join(fails) if fails else "✅ 전부 통과")

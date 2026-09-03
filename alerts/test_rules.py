@@ -28,34 +28,60 @@ def snap(price=1000, count=10, sold_out=False):
 
 
 print("\n[1] 첫 실행에는 아무것도 울리지 않는다 (비교 기준 없음)")
-w = {"kind_id": 1, "name": "테스트", "listingDropAlert": True,
-     "lowestPriceAlert": True, "highestPriceAlert": True}
+w = {"kind_id": 1, "name": "테스트"}
 msgs, st = watch.evaluate(snap(), {}, w, [])
 check("첫 실행 알림 0건", len(msgs), 0)
 check("상태에 가격 기록됨", st["price"], 1000)
 
-print("\n[2] 품귀 — 임계값 미만은 안 울린다")
+print("\n[2] 품귀 — 이 아이템 기준 바닥권 진입 (백분위)")
+# 옛 규칙(직전 실행 대비 N개 감소)은 실행 주기에 따라 뜻이 달라져 폐기했다.
+# 지금은 main() 이 최근 7일 이력에서 계산해 넣어주는 count_pctl 로만 판정한다.
 prev = {"price": 1000, "count": 10, "soldOut": False}
-w3 = {"kind_id": 1, "name": "테스트", "listingDropAlert": True, "listingDropThreshold": 4}
-msgs, _ = watch.evaluate(snap(count=6), prev, w3, [])
-check("4개 감소(임계 4) → 품귀 울림", len(msgs), 1)
-check("품귀 문구", "품귀" in (msgs[0] if msgs else ""), True)
+ws = {"kind_id": 1, "name": "테스트", "count_pctl": 12}
+msgs, st = watch.evaluate(snap(count=6), prev, ws, [])
+check("하위 12% → 품귀 울림", len(msgs), 1)
+check("품귀 문구", "바닥권" in (msgs[0] if msgs else ""), True)
+check("울린 뒤 발화 기록", st["fired"].get("scarce"), True)
+msgs, st = watch.evaluate(snap(count=6), {**prev, "fired": {"scarce": True}}, ws, [])
+check("이미 울렸으면 또 안 울린다", len(msgs), 0)
+msgs, st = watch.evaluate(snap(count=6), {**prev, "fired": {"scarce": True}},
+                          {**ws, "count_pctl": 30}, [])
+check("30%(회복 문턱 40 미만)에선 아직 재무장 안 함", st["fired"].get("scarce"), True)
+msgs, st = watch.evaluate(snap(count=6), {**prev, "fired": {"scarce": True}},
+                          {**ws, "count_pctl": 45}, [])
+check("45%로 회복하면 재무장", st["fired"].get("scarce"), None)
+msgs, _ = watch.evaluate(snap(count=6), prev, {**ws, "count_pctl": 25}, [])
+check("25%(문턱 20 초과)는 안 울림", len(msgs), 0)
+msgs, _ = watch.evaluate(snap(count=6), prev, {**ws, "count_change_24h": 30}, [])
+check("바닥권이어도 24h 로 늘고 있으면 안 울림", len(msgs), 0)
+msgs, _ = watch.evaluate(snap(count=6), prev, {"kind_id": 1, "name": "테스트"}, [])
+check("백분위가 없으면(이력 부족) 판정하지 않는다", len(msgs), 0)
+msgs, _ = watch.evaluate(snap(count=6), prev, {**ws, "listingDropAlert": False}, [])
+check("끄면 안 울린다", len(msgs), 0)
 
-print("\n[3] 저가하락 — 임계 %와 연속확인(streak)")
-wl = {"kind_id": 1, "name": "테스트", "lowestPriceAlert": True,
-      "lowestPriceThresholdPct": 5, "lowestPriceConfirm": 2}
-msgs, st = watch.evaluate(snap(price=970), prev, wl, [])   # -3% → 임계 미달
-check("-3%(임계 5%) → 안 울림", len(msgs), 0)
-check("streak 안 쌓임", st["streak_low"], 0)
-msgs, st = watch.evaluate(snap(price=900), prev, wl, [])   # -10%, 1회차
-check("-10% 1회차 → 아직 안 울림(연속 2회 필요)", len(msgs), 0)
-check("streak 1", st["streak_low"], 1)
-msgs, st = watch.evaluate(snap(price=900), {**prev, "streak_low": 1}, wl, [])
-check("-10% 2회차 → 울림", len(msgs), 1)
-check("울린 뒤 streak 리셋", st["streak_low"], 0)
+print("\n[3] 수량 백분위 — index.html 의 countPercentile 과 같은 규약")
+from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+_NOW = _dt(2026, 9, 3, 12, 0, tzinfo=_tz.utc)
+_NOW_TS = _NOW.timestamp()
+
+
+def cpt(h_ago, c):
+    return {"time": (_NOW - _td(hours=h_ago)).isoformat().replace("+00:00", "Z"), "count_close": c}
+
+
+PTS = [cpt(i, i) for i in range(100)]   # 0~99 가 고르게 있는 100개 표본
+check("가장 작은 값 → 하위 0.5%", round(watch.count_percentile(PTS, 0, _NOW_TS), 1), 0.5)
+check("중앙값 → 약 50%", round(watch.count_percentile(PTS, 50, _NOW_TS), 1), 50.5)
+check("표본 부족(11개)이면 None", watch.count_percentile(PTS[:11], 5, _NOW_TS), None)
+check("수량이 없으면 None", watch.count_percentile(PTS, None, _NOW_TS), None)
+# 동점 처리 — 평소값과 같을 때 하위 0% 로 튀면 헛알림이 나간다
+FLAT = [cpt(i, 40 if i < 8 else 100) for i in range(100)]
+check("평소값(92개가 동일) → 중간쯤", round(watch.count_percentile(FLAT, 100, _NOW_TS), 1), 54.0)
+check("드문 낮은 값 → 바닥", round(watch.count_percentile(FLAT, 40, _NOW_TS), 1), 4.0)
+check("7일보다 오래된 점은 제외", watch.count_percentile([cpt(24 * 9, 5)] * 20, 5, _NOW_TS), None)
 
 print("\n[4] 품절 ↔ 매물있음 은 가격 비교 대상이 아니다")
-wl2 = {"kind_id": 1, "name": "테스트", "lowestPriceAlert": True, "highestPriceAlert": True}
+wl2 = {"kind_id": 1, "name": "테스트"}
 msgs, _ = watch.evaluate(snap(sold_out=True), prev, wl2, [])
 check("매물있음 → 품절: 가격 알림 0건", len(msgs), 0)
 msgs, _ = watch.evaluate(snap(price=500), {"price": None, "count": 10, "soldOut": True}, wl2, [])

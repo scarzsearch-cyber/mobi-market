@@ -161,6 +161,13 @@ PLATEAU_MIN_CANDLES = 3
 PLATEAU_COUNT_RATIO_MAX = 0.5
 PLATEAU_BAND = (0.75, 1.3)
 CEILING_MULT = 1.5
+
+# 품귀 판정 — index.html 의 SCARCE_*/COUNT_MIN_SAMPLES 와 반드시 같아야 한다.
+# "직전 실행보다 N개 줄었다"가 아니라 "이 아이템의 최근 7일 수량 분포에서 바닥권인가"로 본다.
+PCTL_WINDOW_DAYS = 7
+COUNT_MIN_SAMPLES = 12
+SCARCE_ENTER_PCTL = 20
+SCARCE_EXIT_PCTL = 40
 AVG_STALE_SEC = 12 * 3600
 
 
@@ -202,6 +209,32 @@ def estimate_avg(points, now_ts):
                 and est > 0 and PLATEAU_BAND[0] <= implied / est <= PLATEAU_BAND[1]):
             plateau_avg = implied
     return est, floor_avg, plateau_avg, len(win)
+
+
+def count_percentile(points, count, now_ts):
+    """최근 7일 count_close 분포에서 지금 수량의 백분위. 표본이 모자라면 None.
+
+    ★ index.html 의 countPercentile 과 같은 규약이어야 한다 — 화면의 수량 색과 카톡의
+      품귀 알림이 서로 다른 말을 하면 안 된다.
+      수량은 정수라 같은 값이 자주 겹치므로 동점을 절반으로 세는 표준 백분위 순위를 쓴다.
+      (그냥 "미만 개수"로 세면 평소값과 같을 때 하위 0%로 튀어 헛알림이 나간다.)
+    """
+    if count is None:
+        return None
+    cutoff = now_ts - PCTL_WINDOW_DAYS * 86400
+    vals = []
+    for p in points or []:
+        c = p.get("count_close")
+        if c is None or not p.get("time"):
+            continue
+        if _ts(p["time"]) < cutoff:
+            continue
+        vals.append(c)
+    if len(vals) < COUNT_MIN_SAMPLES:
+        return None
+    below = sum(1 for v in vals if v < count)
+    equal = sum(1 for v in vals if v == count)
+    return (below + equal / 2) / len(vals) * 100
 
 
 def pick_ratio(w, learned):
@@ -411,40 +444,28 @@ def evaluate(item, prev, w, alerts):
     prev_sold_out = prev.get("soldOut", False)
 
     state = {"price": price, "count": count, "soldOut": sold_out,
-             "streak_low": 0, "streak_high": 0,
              "fired": dict(prev.get("fired") or {})}
 
     def fmt(n):
         return f"{n:,}" if isinstance(n, (int, float)) else "—"
 
-    # ── 품귀 (직전 대비 수량 감소) ──
-    # 첫 실행이면 비교 기준이 없으므로 건너뛴다 (index.html 과 같은 규약).
-    if prev_count is not None and count is not None:
-        if w.get("listingDropAlert") and (prev_count - count) >= (w.get("listingDropThreshold") or 1):
-            msgs.append(f"⚠ {name} 매물 {fmt(prev_count)} → {fmt(count)}개 — 품귀 진행 중, 팔기 좋은 타이밍일 수 있어요")
-
-    # ── 최저가 하락/상승 ──
-    # 품절↔매물있음 은 "가격 변동"이 아니라 "상태 변화"라 비교 대상이 아니다.
-    if (not prev_sold_out and not sold_out
-            and prev_price not in (None, 0) and price is not None):
-        delta_pct = (price - prev_price) / prev_price * 100
-        is_drop = delta_pct < 0 and abs(delta_pct) >= (w.get("lowestPriceThresholdPct") or 0)
-        is_rise = delta_pct > 0 and delta_pct >= (w.get("highestPriceThresholdPct") or 0)
-
-        if w.get("lowestPriceAlert"):
-            if is_drop:
-                streak = (prev.get("streak_low") or 0) + 1
-                if streak >= (w.get("lowestPriceConfirm") or 1):
-                    msgs.append(f"⬇ {name} 최저가 {fmt(prev_price)} → {fmt(price)} ({delta_pct:+.1f}%) — 지금이 살 타이밍일 수 있어요")
-                    streak = 0
-                state["streak_low"] = streak
-        if w.get("highestPriceAlert"):
-            if is_rise:
-                streak = (prev.get("streak_high") or 0) + 1
-                if streak >= (w.get("highestPriceConfirm") or 1):
-                    msgs.append(f"⬆ {name} 최저가 {fmt(prev_price)} → {fmt(price)} ({delta_pct:+.1f}%) — 지금이 팔 타이밍일 수 있어요")
-                    streak = 0
-                state["streak_high"] = streak
+    # ── 품귀 — 이 아이템 기준으로 매물이 바닥권에 "새로 들어섰을 때" 한 번 ──
+    # 옛 규칙("직전 실행보다 N개 줄었다")은 실행 주기에 따라 뜻이 달라지고 아이템마다
+    # 임계값을 손으로 잡아야 했다. 지금은 최근 7일 수량 분포의 백분위로 본다 —
+    # index.html 의 countPercentile 과 같은 규약이고, 한 번 울리면 회복해야 재무장한다.
+    # 백분위는 main() 이 이력에서 계산해 count_pctl 로 넣어준다(없으면 판정하지 않는다).
+    pctl = w.get("count_pctl")
+    if w.get("listingDropAlert", True) and pctl is not None:
+        if pctl >= SCARCE_EXIT_PCTL:
+            state["fired"].pop("scarce", None)  # 회복했으니 다시 무장
+        elif (pctl <= SCARCE_ENTER_PCTL and not state["fired"].get("scarce")
+                and not (w.get("count_change_24h") or 0) > 0):
+            # 24h 로 오히려 늘고 있으면 바닥권이어도 품귀가 아니다(기준선이 밀린 경우).
+            state["fired"]["scarce"] = True
+            avg_eff = w.get("avgPrice_effective") or w.get("avgPrice")
+            ceil_txt = f" · 천장 {fmt(round(avg_eff * CEILING_MULT))}" if (avg_eff and avg_eff > 0) else ""
+            msgs.append(f"⚠ {name} 매물 {fmt(count)}개 — 최근 7일 중 하위 {pctl:.0f}%로 바닥권"
+                        f" (최저가 {fmt(price)}{ceil_txt}) — 마르기 전에 높은 값으로 걸어둘 때")
 
     # ── 목표가(threshold) / 트레일링 ──
     # index.html 의 checkPriceAlerts 와 같은 규약: 한 번 울리면 조건을 벗어나야 재무장한다.
@@ -604,8 +625,10 @@ def main():
         prev = items_state.get(key) or {}
         w_eff = dict(w)
         learned = prev.get("learned") or {}
-        if w.get("sellHighAlert", True) or w.get("buyLowAlert", True):
-            # 천장 신호가 켜진 아이템만 이력을 한 번 더 받는다 (아이템당 요청 +1).
+        # 천장 신호나 품귀가 켜진 아이템만 이력을 한 번 더 받는다 (아이템당 요청 +1).
+        # 품귀도 같은 이력(count_close)을 쓰므로 요청은 늘지 않는다.
+        if (w.get("sellHighAlert", True) or w.get("buyLowAlert", True)
+                or w.get("listingDropAlert", True)):
             time.sleep(REQUEST_GAP_SEC)
             pts = fetch_history(pool, kind_id, 7)
             est, floor_avg, plateau_avg, n = estimate_avg(pts, now)
@@ -620,6 +643,12 @@ def main():
                 log(f"  · {w['name']}: 평균 {avg:,.1f} ({source}{' ⏰' if recalib else ''}) 천장 {round(avg * CEILING_MULT):,} · 표본 {n}")
             else:
                 log(f"  · {w['name']}: 평균가 없음(이력 {n}개) — 천장 신호 건너뜀")
+            # 품귀 판정에 쓸 수량 백분위 — 화면의 수량 색과 같은 계산이다.
+            pctl = count_percentile(pts, found.get("total_count"), now)
+            if pctl is not None:
+                w_eff["count_pctl"] = pctl
+                w_eff["count_change_24h"] = found.get("count_change_24h")
+                log(f"    수량 {found.get('total_count')}개 = 하위 {pctl:.0f}%")
         msgs, new_state = evaluate(found, prev, w_eff, alerts_by_kind.get(key) or [])
         if learned:
             new_state["learned"] = learned

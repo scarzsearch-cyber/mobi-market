@@ -15,6 +15,11 @@ SRC = os.path.join(HERE, "watch.py")
 
 fails = []
 
+# ★ 스위트가 시작되기 전의 실제 파일 상태. 맨 끝 [14] 에서 이것과 비교한다 —
+#   여기서 찍지 않고 [14] 안에서 찍으면, 앞 테스트가 이미 덮어쓴 뒤라 아무것도 못 잡는다.
+REAL_LEARNED = os.path.join(HERE, "learned.json")
+REAL_LEARNED_BEFORE = io.open(REAL_LEARNED, encoding="utf-8").read() if os.path.exists(REAL_LEARNED) else None
+
 
 def check(label, got, want):
     ok = got == want
@@ -31,6 +36,9 @@ def fresh(tmp, price=1000, count=10):
     m.HERE = tmp
     m.SETTINGS_PATH = os.path.join(tmp, "settings.json")
     m.STATE_PATH = os.path.join(tmp, "state.json")
+    # ★ 쓰는 경로는 하나도 빠짐없이 임시 폴더로 돌린다. 여기 빠뜨리면 테스트가 저장소의
+    #   진짜 파일을 덮어쓴다 — 실제로 learned.json 이 이렇게 비워진 적이 있다.
+    m.LEARNED_PATH = os.path.join(tmp, "learned.json")
     m.REQUEST_GAP_SEC = 0  # 테스트에서 기다리지 않는다
 
     sent = []
@@ -51,9 +59,7 @@ def fresh(tmp, price=1000, count=10):
 
 SETTINGS = {
     "version": 1,
-    "watchList": [{"kind_id": 1, "name": "파동의 영혼석",
-                   "lowestPriceAlert": True, "lowestPriceThresholdPct": 5,
-                   "highestPriceAlert": True, "highestPriceThresholdPct": 5}],
+    "watchList": [{"kind_id": 1, "name": "파동의 영혼석"}],
     "alertsByKind": {"1": [{"id": 3, "type": "threshold", "price": 1500, "dir": "above"}]},
     "quiet": {"enabled": False, "start": "23:00", "end": "08:00"},
     "kakaoItemCooldownMin": 30,
@@ -73,19 +79,19 @@ try:
     check("상태 파일 생성됨", st["items"]["1"]["price"], 1000)
     check("lastRunAt 기록", "lastRunAt" in st, True)
 
-    print("\n[2] 두 번째 실행 — 가격 -20% → 저가하락 전송")
-    m, sent = fresh(tmp, price=800)
+    print("\n[2] 목표가 1500 도달 → 전송")
+    m, sent = fresh(tmp, price=1600)
     check("종료코드", m.main(), 0)
     check("전송 1건", len(sent), 1)
-    check("문구에 저가하락", "⬇" in sent[0][0], True)
+    check("문구에 목표가", "💰" in sent[0][0], True)
     check("링크에 ?open=1", sent[0][1].endswith("?open=1"), True)
 
-    print("\n[3] 곧바로 또 떨어져도 쿨다운(30분) 중이면 안 보낸다")
-    m, sent = fresh(tmp, price=600)
+    print("\n[3] 계속 목표가 위여도 쿨다운(30분) 중이면 안 보낸다")
+    m, sent = fresh(tmp, price=1700)
     check("종료코드", m.main(), 0)
     check("전송 0건 (쿨다운)", len(sent), 0)
     st = json.load(open(os.path.join(tmp, "state.json"), encoding="utf-8"))
-    check("상태는 계속 갱신됨", st["items"]["1"]["price"], 600)
+    check("상태는 계속 갱신됨", st["items"]["1"]["price"], 1700)
 
     print("\n[4] 조용한 시간대면 카톡을 억제하되 상태는 갱신한다")
     s2 = dict(SETTINGS)
@@ -107,7 +113,6 @@ try:
     check("종료코드", m.main(), 0)
     check("전송 1건", len(sent), 1)
     check("목표가 문구", "💰" in sent[0][0], True)
-    check("저가상승도 같이", "⬆" in sent[0][0], True)
 
     print("\n[6] 조회가 전부 실패하면 실패(1)로 올려 메일이 오게 한다")
     m, sent = fresh(tmp)
@@ -122,7 +127,10 @@ try:
     print("\n[8] 카카오 토큰 갱신 실패는 진짜 실패(1)")
     with open(os.path.join(tmp, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(s2, f, ensure_ascii=False)
-    m, sent = fresh(tmp, price=100)
+    # [5] 에서 이미 울린 목표가는 재무장돼 있어야 다시 울린다 — 한 번 내려갔다 오게 한다.
+    m, _ = fresh(tmp, price=1000)
+    m.main()
+    m, sent = fresh(tmp, price=2000)  # 목표가 1500 을 넘겨 전송이 실제로 시도되게
     m.kakao_access_token = lambda r, t: (None, None, "카카오 토큰 갱신 실패 (HTTP 401)")
     check("종료코드 1", m.main(), 1)
 
@@ -151,8 +159,9 @@ print("\n[11] kind_id 없이 이름만 적어도 동작하는가")
 tmp2 = tempfile.mkdtemp()
 try:
     S = {"version": 1,
-         "watchList": [{"name": "파동의 영혼석", "lowestPriceAlert": True, "lowestPriceThresholdPct": 3}],
-         "alertsByKind": {}, "quiet": {"enabled": False, "start": "23:00", "end": "08:00"},
+         "watchList": [{"name": "파동의 영혼석"}],
+         "alertsByKind": {"100": [{"id": 1, "type": "threshold", "price": 900, "dir": "below"}]},
+         "quiet": {"enabled": False, "start": "23:00", "end": "08:00"},
          "kakaoItemCooldownMin": 0}
     with open(os.path.join(tmp2, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(S, f, ensure_ascii=False)
@@ -171,7 +180,7 @@ try:
     check("해석된 kind_id 로 상태 저장", list(st["items"].keys()), ["100"])
 
     m, sent = load(700, ["파동의 영혼석", "야생의 영혼석"])
-    check("두 번째 실행 -30% → 전송 1건", (m.main(), len(sent))[1], 1)
+    check("목표가 900 이하 도달 → 전송 1건", (m.main(), len(sent))[1], 1)
 
     # 같은 이름이 둘이면 임의로 고르지 않는다
     m, sent = load(1000, ["파동의 영혼석", "파동의 영혼석"])
@@ -220,9 +229,10 @@ print("")
 print('[13] 카카오 시크릿 없이도 알림이 나가는가 (GitHub 이슈 통로)')
 tmp4 = tempfile.mkdtemp()
 try:
-    S = {"version": 1, "watchList": [{"name": "파동의 영혼석", "kind_id": 1,
-                                      "lowestPriceAlert": True, "lowestPriceThresholdPct": 3}],
-         "alertsByKind": {}, "quiet": {"enabled": False, "start": "23:00", "end": "08:00"},
+    S = {"version": 1, "watchList": [{"name": "파동의 영혼석", "kind_id": 1}],
+         # 첫 실행은 조용하고 두 번째(700)에서 울리도록 — 통로 선택만 보는 시나리오다
+         "alertsByKind": {"1": [{"id": 1, "type": "threshold", "price": 800, "dir": "below"}]},
+         "quiet": {"enabled": False, "start": "23:00", "end": "08:00"},
          "kakaoItemCooldownMin": 0}
     with open(os.path.join(tmp4, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(S, f, ensure_ascii=False)
@@ -262,6 +272,14 @@ try:
 finally:
     shutil.rmtree(tmp4, ignore_errors=True)
 
+
+# ── [14] 테스트가 저장소의 진짜 파일을 건드리지 않았는가 ──
+# fresh() 에서 쓰기 경로를 하나라도 빠뜨리면 테스트가 실제 데이터 파일을 덮어쓴다.
+# 조용히 일어나고 커밋 직전에야 드러나므로(실제로 learned.json 이 이렇게 비워진 적이 있다)
+# 검사로 고정해 둔다.
+print("\n[14] 저장소의 실제 파일을 건드리지 않는다")
+_after = io.open(REAL_LEARNED, encoding="utf-8").read() if os.path.exists(REAL_LEARNED) else None
+check("learned.json 이 스위트 실행 전과 같은가", _after, REAL_LEARNED_BEFORE)
 
 print("\n" + "─" * 50)
 print("❌ 실패 " + str(len(fails)) + "건: " + ", ".join(fails) if fails else "✅ 전부 통과")

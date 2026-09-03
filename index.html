@@ -97,8 +97,6 @@
   .watch-item .w-updated{color:var(--dim); font-size:11px; white-space:nowrap;}
   .watch-item button{padding:4px 8px; font-size:12px;}
   .watch-item button.toggle-on, .watch-item-toggles button.toggle-on{background:var(--accent); color:#1a1208; border-color:var(--accent); font-weight:700;}
-  .watch-item button.toggle-on.lowprice, .watch-item-toggles button.toggle-on.lowprice{background:#38BDF8; color:#04202b; border-color:#38BDF8; font-weight:700;}
-  .watch-item button.toggle-on.highprice, .watch-item-toggles button.toggle-on.highprice{background:var(--accent); color:#1a1208; border-color:var(--accent); font-weight:700;}
   .watch-item button.toggle-on.dropwarn, .watch-item-toggles button.toggle-on.dropwarn{background:var(--down); color:#2a0906; border-color:var(--down); font-weight:700;}
   .watch-item button.toggle-on.sellhigh, .watch-item-toggles button.toggle-on.sellhigh{background:var(--down); color:#2a0906; border-color:var(--down); font-weight:700;}
   .watch-item button.toggle-on.buylow, .watch-item-toggles button.toggle-on.buylow{background:var(--up); color:#062012; border-color:var(--up); font-weight:700;}
@@ -413,8 +411,9 @@
               <b>2. 아이템 감시하기</b> — 아이템 이름을 검색해 [조회]를 누르면 자동으로 감시 목록에 추가돼요. 목록에서 아이템을 클릭하면 그 아이템 차트로 바로 이동해요.<br><br>
               <b>3. 브라우저 알림</b> — "🔔 알림 방식"에서 "알림 켜기"를 누르면 조건 도달 시 윈도우/맥 알림이 떠요. 카카오톡 설정 없이도 이것만으로 충분히 쓸 수 있어요.<br><br>
               <b>4. 카카오톡 알림(선택)</b> — 폰으로도 받고 싶으면 Kakao Developers(developers.kakao.com)에서 앱을 만들고 JavaScript 키·REST API 키를 위 칸에 입력하세요. 이때 <b>플랫폼 도메인</b>과 <b>Redirect URI</b>를 지금 이 페이지 주소로 정확히 등록해야 하고, <b>동의항목에서 "카카오톡 메시지 전송"</b>을 켜둬야 해요. 이 단계가 좀 까다로우니, 안 되면 편하게 다시 물어보세요.<br><br>
-              <b>5. 천장 신호</b> — 이 거래소는 12시간마다 3일 평균가를 재고, 판매가 상한(천장)은 평균의 1.5배예요. 아이템 카드에 게임에서 보이는 <b>평균 판매가</b>를 넣으면 천장과 "천장의 몇 %"가 자동으로 뜹니다. 🔴 천장근접은 팔 때(물량이 말랐다), 🟢 저가는 살 때, 🔁 되사기는 내가 판 가격의 85% 아래(수수료 15% 감안)예요. ⚠ 품귀는 물량이 빠질 때 미리 높은 가격에 걸어두기 위한 알림이고, 💰 목표가는 원하는 값을 직접 거는 알림이에요.<br><br>
-              <b>6. 탭을 닫아도 돼요</b> — 서버(GitHub Actions)가 10분마다 따로 감시해서 조건이 맞으면 카카오톡으로 보내요. 탭을 열어두면 그 위에 브라우저 알림·소리가 더 빨리 붙고, 카드의 천장·되사기 숫자도 실시간으로 갱신돼요. 감시 목록이나 평균가를 바꿨으면 ⚙️ 설정/백업의 [GitHub에 올리기]로 서버에도 반영해 주세요.
+              <b>5. 천장 신호</b> — 이 거래소는 12시간마다 3일 평균가를 재고, 판매가 상한(천장)은 평균의 1.5배예요. 아이템 카드에 게임에서 보이는 <b>평균 판매가</b>를 넣으면 천장과 "천장의 몇 %"가 자동으로 뜹니다. 🔴 천장근접은 팔 때(물량이 말랐다), 🟢 저가는 살 때, 🔁 되사기는 내가 판 가격의 85% 아래(수수료 15% 감안)예요. ⚠ 품귀는 매물이 <b>그 아이템 기준으로</b> 바닥권(최근 7일 중 하위 20%)에 들어섰을 때 울려요 — 마르면 가격이 오르니 완전히 마르기 전에 높은 값으로 걸어두라는 뜻이고, 개수를 정해줄 필요 없이 아이템마다 자동으로 맞춰집니다. 💰 목표가는 원하는 값을 직접 거는 알림이에요.<br><br>
+              <b>6. 수량 색</b> — 감시 목록의 매물 수량에 색이 붙어요. <span style="color:var(--down);">빨강 = 매우 적음</span>(가격 오를 자리), <span style="color:var(--accent);">주황 = 적음</span>, <span style="color:var(--up);">초록 = 넉넉함</span>(가격 눌릴 자리). 이것도 그 아이템의 최근 7일 분포 기준이라, 평소 500개인 아이템의 100개와 평소 5개인 아이템의 100개를 정반대로 읽어요.<br><br>
+              <b>7. 탭을 닫아도 돼요</b> — 서버(GitHub Actions)가 10분마다 따로 감시해서 조건이 맞으면 카카오톡으로 보내요. 탭을 열어두면 그 위에 브라우저 알림·소리가 더 빨리 붙고, 카드의 천장·되사기 숫자도 실시간으로 갱신돼요. 감시 목록이나 평균가를 바꿨으면 ⚙️ 설정/백업의 [GitHub에 올리기]로 서버에도 반영해 주세요.
             </div>
           </div>
         </div>
@@ -526,7 +525,6 @@ function touchHistoryCacheLRU(kindId) {
     if (idx === -1) break;
     const [evictId] = historyCacheOrder.splice(idx, 1);
     delete historyCacheByKind[evictId];
-    delete recentClosesCache[evictId]; // 파생 캐시도 같이 (안 그러면 여기만 계속 남는다)
   }
 }
 let baseResolution = null;   // API가 실제로 준 원본 해상도 ('10min' | 'hourly' | 'daily')
@@ -539,7 +537,7 @@ let lastCandleMinutes = null; // 사용자가 마지막으로 고른 봉 단위(
 let alertsByKind = {}; // { [kind_id]: [{id, price, dir:'above'|'below', fired}] } — 아이템별 가격 알림
 let alertIdSeq = 1;
 let titleFlashTimer = null;
-let watchList = []; // [{kind_id, name, price, soldOut, count, avgPrice, lowestPriceAlert, highestPriceAlert, listingDropAlert, depletionEtaMin, pct1h, pct24h, pct7d}] — 동시 감시 목록
+let watchList = []; // [{kind_id, name, price, soldOut, count, avgPrice, listingDropAlert, depletionEtaMin, pct1h, pct24h, pct7d}] — 동시 감시 목록
 // { [kind_id]: 지운 시각(ms) } — "이 아이템을 지웠다"는 사실 자체를 기록한다(묘비).
 // 이게 없으면 기기 사이에서 삭제와 "아직 모름"을 구분할 수 없다: 폰이 새로 넣은 아이템과
 // PC가 지운 아이템이 서버 입장에선 똑같이 "한쪽에만 있는 항목"으로 보이기 때문이다.
@@ -614,17 +612,8 @@ function saveSearchStateToStorage() {
 function slimWatchItem(w) {
   return {
     kind_id: w.kind_id, name: w.name,
-    lowestPriceAlert: !!w.lowestPriceAlert, lowestPriceThresholdPct: w.lowestPriceThresholdPct || 0,
-    // confirm 값은 여기서 `|| 1`로 기본값을 채우지 않는다 — 그러면 "한 번도 안 만짐(undefined)"과
-    // "사용자가 일부러 1(즉시발동)을 고름"이 저장 시점에 똑같이 1로 뭉개져서 이후로 영영 구분이
-    // 안 된다. undefined는 JSON 저장/복원을 거쳐도 그대로 undefined로 남으므로, "아직 안 만짐"
-    // 여부는 그대로 남기고, 실제 사용(스트릭 비교, 드롭다운
-    // 표시)은 각 사용처에서 `w.lowestPriceConfirm || 1`처럼 그때그때 기본값을 적용한다.
-    lowestPriceConfirm: w.lowestPriceConfirm,
-    highestPriceAlert: !!w.highestPriceAlert, highestPriceThresholdPct: w.highestPriceThresholdPct || 0,
-    highestPriceConfirm: w.highestPriceConfirm,
-    listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
-    listingDropPct: w.listingDropPct || 0,
+    // 기본 켜짐(opt-out) — 임계값 입력이 사라져 천장근접·저가와 같은 취급이다
+    listingDropAlert: w.listingDropAlert !== false,
     // 천장 기준 신호 (v2 전략): 평균가는 게임에서 읽어 사람이 입력한다 — API 로는 재현이 안 된다(오차 15%).
     avgPrice: (w.avgPrice > 0) ? w.avgPrice : null, avgPriceAt: w.avgPriceAt || null,
     avgRatio: (w.avgRatio > 0) ? w.avgRatio : null, avgRatioAt: w.avgRatioAt || null, avgRatioSrc: w.avgRatioSrc || null,
@@ -642,12 +631,8 @@ function restoreWatchItem(w) {
   return {
     kind_id: w.kind_id, name: w.name, price: null, soldOut: false, count: null,
     lastUpdated: null, alertPanelOpen: false,
-    lowestPriceAlert: !!w.lowestPriceAlert, lowestPriceThresholdPct: w.lowestPriceThresholdPct || 0,
-    lowestPriceConfirm: w.lowestPriceConfirm, // slimWatchItem 주석 참고 — 기본값을 여기서 채우지 않음
-    highestPriceAlert: !!w.highestPriceAlert, highestPriceThresholdPct: w.highestPriceThresholdPct || 0,
-    highestPriceConfirm: w.highestPriceConfirm,
-    listingDropAlert: !!w.listingDropAlert, listingDropThreshold: w.listingDropThreshold || 1,
-    listingDropPct: w.listingDropPct || 0,
+    // 기본 켜짐(opt-out) — 임계값 입력이 사라져 천장근접·저가와 같은 취급이다
+    listingDropAlert: w.listingDropAlert !== false,
     // 천장 기준 신호 (v2 전략): 평균가는 게임에서 읽어 사람이 입력한다 — API 로는 재현이 안 된다(오차 15%).
     avgPrice: (w.avgPrice > 0) ? w.avgPrice : null, avgPriceAt: w.avgPriceAt || null,
     avgRatio: (w.avgRatio > 0) ? w.avgRatio : null, avgRatioAt: w.avgRatioAt || null, avgRatioSrc: w.avgRatioSrc || null,
@@ -3335,7 +3320,7 @@ function queueKakaoAlert(kindId, title, body, itemName) {
       return;
     }
     // 쿨다운을 미리 걸지 않으므로, 같은 배치 대기 중(아직 flush 전)에 같은 아이템으로 서로 다른
-    // 알림(예: 최저가하락 + 목표가도달)이 겹쳐 들어오면 큐에 중복으로 쌓일 수 있다. 그건 한 번의
+    // 알림(예: 품귀 + 목표가도달)이 겹쳐 들어오면 큐에 중복으로 쌓일 수 있다. 그건 한 번의
     // 배치 메시지 안에 같은 아이템이 두 줄로 겹쳐 나가는 것뿐이라 심각하진 않지만, 굳이 중복을
     // 남길 이유는 없으므로 이미 대기 중인 같은 아이템은 건너뛴다(먼저 들어온 알림 내용이 우선).
     if (kakaoQueue.some(q => q.kindId === kindId)) {
@@ -3443,7 +3428,7 @@ function computeDepletionEtaMin(kindId, currentCount) {
 
 
 // type: 'price'(목표가 도달, 높은 톤 1회) | 'newListing'(신규 매물, 낮은 톤 2회) |
-// 'lowPrice'(최저가 하락 = 살 타이밍, 상승 2음) | 'highPrice'(최저가 상승 = 팔 타이밍, 하강 2음) |
+// 'lowPrice'(살 타이밍 = 저가·되사기, 상승 2음) | 'highPrice'(팔 타이밍 = 천장근접, 하강 2음) |
 // 'listingDrop'(품귀 경고, 낮고 무거운 2음) — 눈으로 안 봐도 구분되게
 function playAlertSound(type) {
   try {
@@ -3493,41 +3478,24 @@ function notifyPriceAlert(alertObj, price, itemName, kindId, overrideMsg) {
   queueKakaoAlert(kindId, '💰 가격 알림 도달', msg, itemName);
 }
 
-// 최저가가 직전 확인 시점보다 "떨어졌을 때" — 재판매가 불가능한 시장에서는 이 순간이 곧
-// "지금 사면 방금 전보다 싸게 산다"는 뜻이라, 살 타이밍을 노리는 사람에게 가장 직접적인 신호다.
-function notifyLowestPriceAlert(w, prevPrice, newPrice, dropPct) {
-  const msg = `${w.name} 최저가 ${prevPrice.toLocaleString()} → ${newPrice.toLocaleString()} (-${dropPct.toFixed(1)}%) — 지금이 살 타이밍일 수 있어요`;
-  showBrowserNotification('⬇ 최저가 하락', msg, w.kind_id);
-  playAlertSound('lowPrice');
-  flashTabTitle('⬇ 최저가 하락!');
-  queueKakaoAlert(w.kind_id, '⬇ 최저가 하락', msg, w.name);
-}
-
-// 최저가가 직전 확인 시점보다 "올랐을 때" — 시장의 바닥 가격 자체가 오르고 있다는 뜻이라,
-// 팔 계획이 있는 사람에게는 "지금 등록하면 전보다 비싸게 팔 수 있다"는 신호가 된다.
-function notifyHighestPriceAlert(w, prevPrice, newPrice, risePct) {
-  const msg = `${w.name} 최저가 ${prevPrice.toLocaleString()} → ${newPrice.toLocaleString()} (+${risePct.toFixed(1)}%) — 지금이 팔 타이밍일 수 있어요`;
-  showBrowserNotification('⬆ 최저가 상승', msg, w.kind_id);
-  playAlertSound('highPrice');
-  flashTabTitle('⬆ 최저가 상승!');
-  queueKakaoAlert(w.kind_id, '⬆ 최저가 상승', msg, w.name);
-}
-
-// 매물 수량이 설정한 개수 이상 "줄었을 때" — 신규 매물 알림의 반대. 재판매 불가 시장에서
-// 수량이 빠르게 빠진다는 건 수요가 강하다는 뜻이라, 지금 등록하면 비싸게 팔릴 가능성이 높다.
-function notifyListingDrop(w, prevCount, newCount) {
+// 매물이 그 아이템 기준으로 바닥권에 들어섰을 때 — 마르면 가격이 오르므로, 완전히 마르기 전에
+// 높은 값으로 미리 걸어두는 것이 이 알림의 목적이다.
+function notifyListingDrop(w, pctl) {
   const priceTxt = w.soldOut ? '품절' : (w.price !== null ? w.price.toLocaleString() : '-');
-  const dropPct = prevCount ? ((prevCount - newCount) / prevCount * 100) : 0;
-  // 소진 속도를 같이 알려준다 — "몇 개 줄었다"보다 "이 속도면 언제 없어진다"가 행동에 직결된다.
+  const ceil = ceilingOf(w);
+  // 천장을 알면 "얼마에 걸어라"까지 말해준다 — 이 알림의 목적이 미리 걸어두는 것이므로,
+  // 여기서 가격을 못 주면 사람이 화면을 열어 다시 계산해야 한다.
+  const ceilTxt = ceil ? ` · 천장 ${ceil.toLocaleString()}` : '';
+  // 소진 속도는 알 때만 — "몇 개 남았다"보다 "이 속도면 언제 없어진다"가 행동에 직결된다.
   const eta = w.depletionEtaMin;
   const etaTxt = (eta !== null && eta !== undefined && eta <= 120)
     ? ` · 이 속도면 ${eta < 1 ? '1분 내' : `약 ${Math.round(eta)}분 뒤`} 품절`
     : '';
-  const msg = `${w.name} 매물 ${prevCount.toLocaleString()} → ${newCount.toLocaleString()}개 (-${dropPct.toFixed(0)}%${etaTxt}, 현재 최저가 ${priceTxt}) — 품귀 진행 중`;
-  showBrowserNotification('⚠️ 품귀 진행 중', msg, w.kind_id);
+  const msg = `${w.name} 매물 ${w.count.toLocaleString()}개 — 최근 7일 중 하위 ${pctl.toFixed(0)}%로 바닥권입니다${etaTxt} (현재 최저가 ${priceTxt}${ceilTxt}) — 마르기 전에 높은 값으로 걸어둘 때`;
+  showBrowserNotification('⚠️ 품귀 — 매물 바닥권', msg, w.kind_id);
   playAlertSound('listingDrop');
   flashTabTitle('⚠️ 품귀!');
-  queueKakaoAlert(w.kind_id, '⚠️ 품귀 진행 중', msg, w.name);
+  queueKakaoAlert(w.kind_id, '⚠️ 품귀 — 매물 바닥권', msg, w.name);
 }
 
 // ---- 천장 기준 알림 ----
@@ -3606,62 +3574,6 @@ function stopFocusTimer() {
   if (focusTimer) { clearTimeout(focusTimer); focusTimer = null; }
 }
 
-// 최저가 하락(⬇ 살 타이밍) 알림 켜기/끄기
-function toggleLowestPriceAlert(kindId) {
-  const w = watchList.find(x => x.kind_id === kindId);
-  if (!w) return;
-  w.lowestPriceAlert = !w.lowestPriceAlert;
-  renderWatchList();
-}
-
-// 최저가 하락 알림의 최소 하락폭(%) — 0이면 아주 작은 하락에도 알림 (기본값)
-function setLowestPriceThreshold(kindId, val) {
-  const w = watchList.find(x => x.kind_id === kindId);
-  if (!w) return;
-  const n = parseFloat(val);
-  w.lowestPriceThresholdPct = (!n || n < 0) ? 0 : n;
-  saveWatchStateToStorage();
-}
-
-// 최저가 하락 알림의 "연속 확인" 횟수 — 1이면 즉시(기존과 동일), 2 이상이면 그만큼 연속으로
-// 같은 방향 변화가 관측돼야 알림이 울려서 순간적인 스파이크성 매물로 인한 오탐을 줄인다.
-function setLowestPriceConfirm(kindId, val) {
-  const w = watchList.find(x => x.kind_id === kindId);
-  if (!w) return;
-  const n = parseInt(val, 10);
-  w.lowestPriceConfirm = (!n || n < 1) ? 1 : n;
-  w._lowStreak = 0; // 설정이 바뀌면 진행 중이던 카운트는 리셋
-  saveWatchStateToStorage();
-}
-
-// 최저가 상승(⬆ 팔 타이밍) 알림 켜기/끄기
-function toggleHighestPriceAlert(kindId) {
-  const w = watchList.find(x => x.kind_id === kindId);
-  if (!w) return;
-  w.highestPriceAlert = !w.highestPriceAlert;
-  renderWatchList();
-}
-
-// 최저가 상승 알림의 최소 상승폭(%) — 0이면 아주 작은 상승에도 알림 (기본값)
-function setHighestPriceThreshold(kindId, val) {
-  const w = watchList.find(x => x.kind_id === kindId);
-  if (!w) return;
-  const n = parseFloat(val);
-  w.highestPriceThresholdPct = (!n || n < 0) ? 0 : n;
-  saveWatchStateToStorage();
-}
-
-// 최저가 상승 알림의 "연속 확인" 횟수 (위 lowestPriceConfirm과 대칭)
-function setHighestPriceConfirm(kindId, val) {
-  const w = watchList.find(x => x.kind_id === kindId);
-  if (!w) return;
-  const n = parseInt(val, 10);
-  w.highestPriceConfirm = (!n || n < 1) ? 1 : n;
-  w._highStreak = 0;
-  saveWatchStateToStorage();
-}
-
-// 품귀(수량 급감) 알림 켜기/끄기
 // ---- 천장 신호 입력 ----
 function setAvgPrice(kindId, val) {
   const w = watchList.find(x => x.kind_id === kindId);
@@ -3719,28 +3631,15 @@ function toggleRebuyAlert(kindId) {
   saveWatchStateToStorage(); renderWatchList();
 }
 
+// 품귀 알림 켜기/끄기. 기본 켜짐(opt-out) — 임계값을 손으로 잡을 필요가 없어졌으므로
+// 천장근접·저가와 같은 취급을 한다.
 function toggleListingDropAlert(kindId) {
   const w = watchList.find(x => x.kind_id === kindId);
   if (!w) return;
-  w.listingDropAlert = !w.listingDropAlert;
+  w.listingDropAlert = (w.listingDropAlert === false); // false ↔ true (undefined 는 켜진 상태)
+  w._scarceFired = false;
+  saveWatchStateToStorage();
   renderWatchList();
-}
-
-// 품귀 알림 최소 감소 수량 설정 (신규 매물 알림과 대칭되는 개념)
-function setListingDropPct(kindId, val) {
-  const w = watchList.find(x => x.kind_id === kindId);
-  if (!w) return;
-  const n = parseFloat(val);
-  w.listingDropPct = (!n || n < 0) ? 0 : n; // 0 = % 조건 안 씀(개수만)
-  saveWatchStateToStorage();
-}
-
-function setListingDropThreshold(kindId, val) {
-  const w = watchList.find(x => x.kind_id === kindId);
-  if (!w) return;
-  const n = parseInt(val, 10);
-  w.listingDropThreshold = (!n || n < 1) ? 1 : n;
-  saveWatchStateToStorage();
 }
 
 // 감시목록 표시 정렬 방식 변경
@@ -4021,7 +3920,7 @@ function ensureWatchListHasItem(picked) {
   const existing = watchList.find(w => w.kind_id === picked.kind_id);
   if (existing) { refreshWatchItem(existing); return existing; }
   // addedAt: 기기 사이 병합에서 "지운 것"과 "다시 넣은 것"을 가르는 기준 (removedKinds 참고)
-  const entry = { kind_id: picked.kind_id, name: picked.name, price: null, soldOut: false, count: null, lowestPriceConfirm: 2, highestPriceConfirm: 2, addedAt: Date.now() };
+  const entry = { kind_id: picked.kind_id, name: picked.name, price: null, soldOut: false, count: null, addedAt: Date.now() };
   delete removedKinds[picked.kind_id]; // 다시 넣었으니 옛 묘비는 치운다
   watchList.push(entry);
   renderWatchList();
@@ -4097,9 +3996,6 @@ async function refreshWatchItem(w) {
     const found = (data.data || []).find(d => d.kind_id === w.kind_id);
     if (!found) return;
 
-    const prevCount = w.count; // 신규 매물/품귀 감지는 "직전 대비 증감"만 봐야 하므로, 갱신 전 값을 먼저 챙겨둔다
-    const prevPrice = w.price; // 최저가 하락/상승 감지도 마찬가지로 갱신 전 값이 필요
-    const prevSoldOut = w.soldOut;
     w.soldOut = found.is_sold_out;
     w.price = found.is_sold_out ? null : found.min_price;
     w.count = found.total_count;
@@ -4111,51 +4007,6 @@ async function refreshWatchItem(w) {
     w.lastUpdated = Date.now();
     if (!found.is_sold_out) checkPriceAlerts(w.kind_id, w.price, w.name);
 
-    // 품귀(수량 급감) 알림 — 물량이 마르면 천장 근처에 걸어둘 때다.
-    // 개수 조건과 함께 "몇 % 줄었나"도 걸 수 있다(listingDropPct). 매물이 500개인 아이템에서
-    // 5개 감소는 아무것도 아니지만 20개인 아이템에선 큰 사건이라, 개수만으로는 아이템마다
-    // 임계값을 다시 잡아줘야 했다. 둘 다 설정하면 둘 다 만족해야 울린다(AND).
-    const dropThreshold = w.listingDropThreshold || 1;
-    const dropped = prevCount !== null ? (prevCount - found.total_count) : 0;
-    const droppedPct = (prevCount !== null && prevCount > 0) ? (dropped / prevCount * 100) : 0;
-    const pctOk = !(w.listingDropPct > 0) || droppedPct >= w.listingDropPct;
-    if (w.listingDropAlert && prevCount !== null && dropped >= dropThreshold && pctOk) {
-      notifyListingDrop(w, prevCount, found.total_count);
-    }
-
-    // 최저가 하락/상승 알림 — 품절이었다가 매물이 생기거나, 매물이 있다가 품절되는 경우는
-    // "가격 변동"이 아니라 "상태 변화"라 비교 대상이 아니므로 양쪽 다 품절이 아닐 때만 비교한다.
-    // 순간적인 스파이크성 매물 하나 때문에 오탐이 나는 걸 줄이기 위해, 설정된 "연속 확인" 횟수만큼
-    // 같은 방향의 변화가 반복돼야만 실제로 알림을 울린다(기본값 1 = 즉시 알림, 기존과 동일 동작).
-    if (!prevSoldOut && !found.is_sold_out && prevPrice !== null && prevPrice !== undefined && w.price !== null) {
-      const pctDelta = ((w.price - prevPrice) / prevPrice) * 100;
-      const isDrop = pctDelta < 0 && Math.abs(pctDelta) >= (w.lowestPriceThresholdPct || 0);
-      const isRise = pctDelta > 0 && pctDelta >= (w.highestPriceThresholdPct || 0);
-
-      if (w.lowestPriceAlert) {
-        if (isDrop) {
-          w._lowStreak = (w._lowStreak || 0) + 1;
-          if (w._lowStreak >= (w.lowestPriceConfirm || 1)) {
-            notifyLowestPriceAlert(w, prevPrice, w.price, Math.abs(pctDelta));
-            w._lowStreak = 0;
-          }
-        } else {
-          w._lowStreak = 0;
-        }
-      }
-      if (w.highestPriceAlert) {
-        if (isRise) {
-          w._highStreak = (w._highStreak || 0) + 1;
-          if (w._highStreak >= (w.highestPriceConfirm || 1)) {
-            notifyHighestPriceAlert(w, prevPrice, w.price, pctDelta);
-            w._highStreak = 0;
-          }
-        } else {
-          w._highStreak = 0;
-        }
-      }
-    }
-
     // 매물 소진 속도 — 최근 수량 이력을 쌓아두고, 지금 속도로 줄어들면 몇 분 뒤 품절인지 추정한다.
     pushCountHistory(w.kind_id, found.total_count, w.lastUpdated);
     w.depletionEtaMin = computeDepletionEtaMin(w.kind_id, found.total_count);
@@ -4163,6 +4014,22 @@ async function refreshWatchItem(w) {
     // 평균가 추정에 쓸 7일 이력 확보 (없거나 1시간 넘었을 때만 — 큐가 속도를 맞춘다)
     await ensureEstimateHistory(w.kind_id, w.name);
     learnRatioFromPlateau(w); // 물량이 마른 순간을 잡으면 계수를 스스로 배운다
+
+    // ── 품귀 — 이 아이템 기준으로 매물이 바닥권에 "새로 들어섰을 때" 한 번 ──
+    // ★ 반드시 ensureEstimateHistory 뒤에 와야 한다 — 백분위가 그 7일 이력을 쓰기 때문에,
+    //   앞에 두면 이력을 받기 전이라 첫 조회 때 늘 판정 불가가 된다.
+    if (w.listingDropAlert !== false) {
+      const cp = countPercentile(w.kind_id, w.count);
+      if (cp) {
+        if (cp.pctl >= SCARCE_EXIT_PCTL) {
+          w._scarceFired = false; // 회복했으니 다시 무장
+        } else if (cp.pctl <= SCARCE_ENTER_PCTL && !w._scarceFired && !(w.countChange24h > 0)) {
+          // 24h 로 오히려 늘고 있는 중이면 바닥권이어도 품귀가 아니다(기준선이 밀린 경우).
+          w._scarceFired = true;
+          notifyListingDrop(w, cp.pctl);
+        }
+      }
+    }
 
     // ── 천장 기준 신호 (v2) — 한 번 울리면 기준에서 10%p 벗어나야 재무장 (경계선 진동 방지) ──
     const bandPos = bandPosPct(w);
@@ -4343,6 +4210,17 @@ const COUNT_LOW_PCTL = 25;    // 하위 25% — 적은 편
 const COUNT_HIGH_PCTL = 75;   // 상위 25% — 넉넉한 편
 const COUNT_MIN_SAMPLES = 12; // 표본이 이보다 적으면 백분위를 못 믿는다 — 색을 넣지 않는다
 
+// ---- 품귀 알림의 기준 ----
+// 옛 규칙은 "직전 조회보다 N개 줄었다"였다. 두 가지가 잘못돼 있었다:
+//   ① 조회 주기에 따라 뜻이 달라진다 — 15초 만에 5개 줄어든 것과 10분 만에 5개 줄어든 것은
+//      완전히 다른 사건인데 같은 규칙이 잡았다.
+//   ② 아이템마다 임계값을 손으로 다시 잡아야 했다 — 매물 500개짜리의 5개 감소와
+//      20개짜리의 5개 감소는 뜻이 정반대다.
+// 새 규칙은 수량 색과 같은 잣대를 쓴다: 그 아이템의 최근 7일 수량 분포에서 지금이
+// 바닥권에 "새로 들어섰는가". 조회 주기와 무관하고 아이템마다 자동으로 맞는다.
+const SCARCE_ENTER_PCTL = 20; // 하위 20% 아래로 들어오면 품귀
+const SCARCE_EXIT_PCTL = 40;  // 40% 위로 회복해야 다시 무장 — 경계에서 알림이 반복되지 않게
+
 // 최근 7일 이력의 count_close 분포에서 지금 수량의 백분위. 표본이 모자라면 null.
 // 수량은 정수라 같은 값이 자주 겹치므로, 동점을 절반으로 세는 표준 백분위 순위를 쓴다
 // (그냥 "미만 개수"로 세면 평소값과 같을 때 하위 0%로 튀어 빨간불이 잘못 켜진다).
@@ -4399,6 +4277,15 @@ function countInfo(w) {
   return { text: base, color: 'var(--dim)', title: `평소 수준이에요. ${tail}` };
 }
 
+// ⚠ 품귀 버튼에 붙는 설명 — 지금 이 아이템이 어디쯤인지까지 같이 보여준다.
+// 임계값 입력칸이 없어졌으므로, 기준이 무엇인지는 여기서만 알 수 있다.
+function scarceTitle(w) {
+  const base = `매물이 이 아이템 기준 바닥권(최근 7일 하위 ${SCARCE_ENTER_PCTL}%)에 들어서면 알림 — 마르면 가격이 오르니 미리 걸어둘 때예요. 임계값을 정하실 필요 없이 아이템마다 자동으로 맞춰집니다.`;
+  const r = countPercentile(w.kind_id, w.count);
+  if (!r) return base + ' (지금은 수량 이력이 부족해 판정하지 않아요)';
+  return base + ` 지금은 하위 ${r.pctl.toFixed(0)}% 입니다.`;
+}
+
 // 감시 목록 아이템의 과거 시세이력 캐시에서, 주어진 가격이 그 분포 안에서 하위 몇 %에
 // 위치하는지(백분위)를 구한다. 0에 가까울수록 "최근 국면 기준으로 유난히 쌌던 가격",
 // 100에 가까울수록 "유난히 비쌌던 가격" — 평균 대비 편차(흐름 참고용)와 달리, 이건
@@ -4411,48 +4298,6 @@ function countInfo(w) {
 // 맞다. 그래서 최근 일정 기간(고정 7일)이 지난 시세는 통째로 제외하고, 그 안의 시세만
 // 가지고 지금 가격의 상대적 위치를 판단한다.
 const PERCENTILE_WINDOW_DAYS = 7; // 이보다 오래된 시세는 완전히 제외 — 패치 주기(1주)에 맞춤
-
-// historyCacheByKind에 캐시된 여러 기간(daysSel) 중 하나를 골라, 그 안에서
-// PERCENTILE_WINDOW_DAYS(7일) 컷오프 안쪽의 종가만 추출해 반환한다.
-// (화면 상단 기간 선택 드롭다운과 무관하게 신호 계산은 항상 이 7일 고정 창만 봄.)
-// computeSuggestedThresholdPct(✨추천 임계값)가 쓴다.
-//
-// ★ 어느 엔트리를 고르느냐가 표본 수를 좌우한다 — 예전엔 "가장 긴 기간"을 골랐는데,
-// 컷오프가 7일 고정이라 기간이 길수록 봉이 굵어져서(30·90일=일봉) 7일 안에 남는 종가가
-// 오히려 줄어든다. 90일 차트를 한 번 봤다는 이유만으로 표본이 168개(7일=1시간봉)에서
-// 7~8개(일봉)로 떨어지고, 그러면 백분위 한 칸이 14%p씩 튀면서 신호 스코어의 주 지표
-// (±85점)와 ✨추천 임계값·적정 등록가가 통째로 거칠어진다. 그래서 "가장 긴 기간"이
-// 아니라 "컷오프 안에 점이 가장 많은 기간"을 고른다.
-//
-// 캐시(stamp)가 그대로인 동안은 결과 배열을 그대로 재사용한다 — 이 함수는 스코어 1회
-// 계산에 3번, 정렬 비교마다 반복해서 불리는 최다 호출 지점이라, 매번 전체 포인트에
-// new Date()를 걸면 감시 목록이 클 때 렌더가 눈에 띄게 밀린다.
-let recentClosesCache = {}; // { [kindId]: { stamp, at, closes } }
-const RECENT_CLOSES_MEMO_MS = 30000; // 캐시가 안 바뀌어도 7일 컷오프는 시간이 흐르므로 이 간격마다 재계산
-
-function getRecentClosesForKind(kindId) {
-  const kindCache = historyCacheByKind[kindId];
-  if (!kindCache) return null;
-  const entries = Object.entries(kindCache).filter(([, e]) => e && e.histData && e.histData.points && e.histData.points.length);
-  if (!entries.length) return null;
-
-  // 스탬프는 (기간:저장시각) 조합 — 히스토리가 갱신되면 저절로 무효화된다.
-  const stamp = entries.map(([d, e]) => d + ':' + e.ts).join('|');
-  const memo = recentClosesCache[kindId];
-  if (memo && memo.stamp === stamp && (Date.now() - memo.at) < RECENT_CLOSES_MEMO_MS) return memo.closes;
-
-  const cutoff = Date.now() - PERCENTILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  let best = null;
-  for (const [, e] of entries) {
-    const closes = (e.histData.points || [])
-      .filter(p => (p.sample_count ?? 1) > 0 && p.close !== null && p.close !== undefined && p.time && new Date(p.time).getTime() >= cutoff)
-      .map(p => p.close);
-    if (!best || closes.length > best.length) best = closes;
-  }
-  const result = (best && best.length) ? best : null;
-  recentClosesCache[kindId] = { stamp, at: Date.now(), closes: result };
-  return result;
-}
 
 const SELL_FEE_PCT = 15; // 판매 수수료 — 제작 계산기·되사기 손익 계산에 쓴다
 
@@ -4638,40 +4483,6 @@ function computeBandBadge(w) {
 }
 
 
-// ---- 변동성 기반 동적 임계값 추천 ----
-// 아이템마다 평소 흔들리는 폭(표준편차 기반 변동계수)이 다르다 — 조용한 아이템은 1~2%
-// 움직임도 의미가 있는 반면, 원래 출렁이는 아이템은 10% 정도는 그냥 일상적인 노이즈일 수 있다.
-// 그래서 고정된 숫자 대신 이 아이템의 최근 변동계수(cv)의 일부를 임계값으로 추천한다.
-// 지난 시즌/지난 패치의 변동성은 지금과 무관하므로 최근
-// PERCENTILE_WINDOW_DAYS(7일) 창만 본다 — daysSel 선택값과 무관하게 고정.
-// 변동계수(표준편차 ÷ 평균, %) — ✨추천 임계값이 쓴다.
-function coeffOfVariation(values) {
-  if (!values || values.length < 3) return null;
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  if (!mean) return null;
-  const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
-  return Math.sqrt(variance) / mean * 100;
-}
-
-function computeSuggestedThresholdPct(kindId) {
-  const cv = coeffOfVariation(getRecentClosesForKind(kindId));
-  if (cv === null) return null;
-  // 변동계수를 그대로 쓰면 너무 둔감해지므로 40%만 반영 — 최소 0.5%는 보장
-  return Math.max(0.5, Math.round(cv * 0.4 * 10) / 10);
-}
-
-// "⬇저가하락"/"⬆저가상승" 임계값 입력칸에 추천값을 채워 넣는다. dir: 'low' | 'high'
-function applySuggestedThreshold(kindId, dir) {
-  const suggested = computeSuggestedThresholdPct(kindId);
-  if (suggested === null) { setHint('추천값을 계산하려면 먼저 이 아이템을 [조회]해서 시세이력을 불러와주세요.', true); return; }
-  const w = watchList.find(x => x.kind_id === kindId);
-  if (!w) return;
-  if (dir === 'low') w.lowestPriceThresholdPct = suggested;
-  else w.highestPriceThresholdPct = suggested;
-  saveWatchStateToStorage();
-  renderWatchList();
-}
-
 
 // 현재 정렬 모드(watchSortMode)에 따라 표시용 목록을 정렬한 사본을 반환한다.
 // (watchList 원본 순서는 저장/추가 순서 유지를 위해 건드리지 않는다)
@@ -4794,9 +4605,6 @@ function renderWatchList() {
     const depleteBadgeTxt = computeDepletionBadgeText(w);
     const bandBadge = computeBandBadge(w);
     const rb = rebuyInfo(w);
-    const suggestedPct = computeSuggestedThresholdPct(w.kind_id);
-    const suggestedTitle = suggestedPct !== null ? `변동성 기반 추천값: ${suggestedPct}%` : '추천값을 계산하려면 먼저 [조회]로 시세이력을 불러오세요';
-    const confirmOptions = (selected) => [1, 2, 3].map(n => `<option value="${n}"${n === (selected || 1) ? ' selected' : ''}>${n}회</option>`).join('');
     return `
       <div class="watch-item-wrap" id="wRow_${w.kind_id}">
         <div class="watch-item">
@@ -4828,12 +4636,7 @@ function renderWatchList() {
           <span id="wCountChg24h_${w.kind_id}" style="color:${countChgColor};">${countChgTxt}</span>
         </div>
         <div class="watch-item-toggles">
-          <button class="ghost${w.lowestPriceAlert ? ' toggle-on lowprice' : ''}" onclick="toggleLowestPriceAlert(${w.kind_id})" title="최저가가 떨어지면 알림 (살 타이밍)">⬇ 저가하락${w.lowestPriceAlert ? ' 감지중' : ''}</button>
-          ${w.lowestPriceAlert ? `<input type="number" min="0" step="0.5" value="${w.lowestPriceThresholdPct || 0}" title="최소 몇 % 이상 떨어져야 알림을 울릴지 (0=조금만 떨어져도)" onchange="setLowestPriceThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↓</span><button class="ghost" onclick="applySuggestedThreshold(${w.kind_id}, 'low')" title="${suggestedTitle}">✨추천</button><select title="연속 몇 번 확인되면 울릴지 (오탐 방지)" onchange="setLowestPriceConfirm(${w.kind_id}, this.value)">${confirmOptions(w.lowestPriceConfirm)}</select>` : ''}
-          <button class="ghost${w.highestPriceAlert ? ' toggle-on highprice' : ''}" onclick="toggleHighestPriceAlert(${w.kind_id})" title="최저가가 오르면 알림 (팔 타이밍)">⬆ 저가상승${w.highestPriceAlert ? ' 감지중' : ''}</button>
-          ${w.highestPriceAlert ? `<input type="number" min="0" step="0.5" value="${w.highestPriceThresholdPct || 0}" title="최소 몇 % 이상 올라야 알림을 울릴지 (0=조금만 올라도)" onchange="setHighestPriceThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↑</span><button class="ghost" onclick="applySuggestedThreshold(${w.kind_id}, 'high')" title="${suggestedTitle}">✨추천</button><select title="연속 몇 번 확인되면 울릴지 (오탐 방지)" onchange="setHighestPriceConfirm(${w.kind_id}, this.value)">${confirmOptions(w.highestPriceConfirm)}</select>` : ''}
-          <button class="ghost${w.listingDropAlert ? ' toggle-on dropwarn' : ''}" onclick="toggleListingDropAlert(${w.kind_id})" title="매물 수량이 급격히 줄면(품귀) 알림 — 팔 타이밍 신호">⚠ 품귀${w.listingDropAlert ? ' 감지중' : ''}</button>
-          ${w.listingDropAlert ? `<input type="number" min="1" step="1" value="${w.listingDropThreshold || 1}" title="최소 몇 개 이상 줄어야 알림을 울릴지" onchange="setListingDropThreshold(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">개↓</span><input type="number" min="0" step="1" value="${w.listingDropPct || 0}" title="최소 몇 % 이상 줄어야 알림을 울릴지 (0=% 조건 안 씀). 개수 조건과 둘 다 만족해야 울려요 — 매물 500개짜리에서 5개 감소 같은 잔움직임을 걸러줍니다." onchange="setListingDropPct(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↓</span>` : ''}
+          <button class="ghost${w.listingDropAlert !== false ? ' toggle-on dropwarn' : ''}" onclick="toggleListingDropAlert(${w.kind_id})" title="${escHtml(scarceTitle(w))}">⚠ 품귀${w.listingDropAlert !== false ? ' 감지중' : ''}</button>
           <button class="ghost${w.sellHighAlert ? ' toggle-on sellhigh' : ''}" onclick="toggleSellHighAlert(${w.kind_id})" title="최저가가 천장의 N% 이상이면 알림 — 물량이 말랐으니 천장 근처에 걸어두면 팔려요">🔴 천장근접${w.sellHighAlert ? ' 감지중' : ''}</button>
           ${w.sellHighAlert ? `<input type="number" min="50" max="100" step="1" value="${w.sellHighPct || 90}" title="천장의 몇 % 이상이면 팔 때로 볼지" onchange="setSellHighPct(${w.kind_id}, this.value)"><span class="hint" style="margin:0;">%↑</span>` : ''}
           <button class="ghost${w.buyLowAlert ? ' toggle-on buylow' : ''}" onclick="toggleBuyLowAlert(${w.kind_id})" title="최저가가 천장의 N% 이하면 알림 — 천장 대비 싸니 살 때예요">🟢 저가${w.buyLowAlert ? ' 감지중' : ''}</button>

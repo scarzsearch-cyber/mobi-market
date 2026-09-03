@@ -29,7 +29,7 @@ def snap(price=1000, count=10, sold_out=False):
 
 print("\n[1] 첫 실행에는 아무것도 울리지 않는다 (비교 기준 없음)")
 w = {"kind_id": 1, "name": "테스트"}
-msgs, st = watch.evaluate(snap(), {}, w, [])
+msgs, st = watch.evaluate(snap(), {}, w)
 check("첫 실행 알림 0건", len(msgs), 0)
 check("상태에 가격 기록됨", st["price"], 1000)
 
@@ -38,25 +38,25 @@ print("\n[2] 품귀 — 이 아이템 기준 바닥권 진입 (백분위)")
 # 지금은 main() 이 최근 7일 이력에서 계산해 넣어주는 count_pctl 로만 판정한다.
 prev = {"price": 1000, "count": 10, "soldOut": False}
 ws = {"kind_id": 1, "name": "테스트", "count_pctl": 12}
-msgs, st = watch.evaluate(snap(count=6), prev, ws, [])
+msgs, st = watch.evaluate(snap(count=6), prev, ws)
 check("하위 12% → 품귀 울림", len(msgs), 1)
 check("품귀 문구", "바닥권" in (msgs[0] if msgs else ""), True)
 check("울린 뒤 발화 기록", st["fired"].get("scarce"), True)
-msgs, st = watch.evaluate(snap(count=6), {**prev, "fired": {"scarce": True}}, ws, [])
+msgs, st = watch.evaluate(snap(count=6), {**prev, "fired": {"scarce": True}}, ws)
 check("이미 울렸으면 또 안 울린다", len(msgs), 0)
 msgs, st = watch.evaluate(snap(count=6), {**prev, "fired": {"scarce": True}},
-                          {**ws, "count_pctl": 30}, [])
+                          {**ws, "count_pctl": 30})
 check("30%(회복 문턱 40 미만)에선 아직 재무장 안 함", st["fired"].get("scarce"), True)
 msgs, st = watch.evaluate(snap(count=6), {**prev, "fired": {"scarce": True}},
-                          {**ws, "count_pctl": 45}, [])
+                          {**ws, "count_pctl": 45})
 check("45%로 회복하면 재무장", st["fired"].get("scarce"), None)
-msgs, _ = watch.evaluate(snap(count=6), prev, {**ws, "count_pctl": 25}, [])
+msgs, _ = watch.evaluate(snap(count=6), prev, {**ws, "count_pctl": 25})
 check("25%(문턱 20 초과)는 안 울림", len(msgs), 0)
-msgs, _ = watch.evaluate(snap(count=6), prev, {**ws, "count_change_24h": 30}, [])
+msgs, _ = watch.evaluate(snap(count=6), prev, {**ws, "count_change_24h": 30})
 check("바닥권이어도 24h 로 늘고 있으면 안 울림", len(msgs), 0)
-msgs, _ = watch.evaluate(snap(count=6), prev, {"kind_id": 1, "name": "테스트"}, [])
+msgs, _ = watch.evaluate(snap(count=6), prev, {"kind_id": 1, "name": "테스트"})
 check("백분위가 없으면(이력 부족) 판정하지 않는다", len(msgs), 0)
-msgs, _ = watch.evaluate(snap(count=6), prev, {**ws, "listingDropAlert": False}, [])
+msgs, _ = watch.evaluate(snap(count=6), prev, {**ws, "listingDropAlert": False})
 check("끄면 안 울린다", len(msgs), 0)
 
 print("\n[3] 수량 백분위 — index.html 의 countPercentile 과 같은 규약")
@@ -82,35 +82,10 @@ check("7일보다 오래된 점은 제외", watch.count_percentile([cpt(24 * 9, 
 
 print("\n[4] 품절 ↔ 매물있음 은 가격 비교 대상이 아니다")
 wl2 = {"kind_id": 1, "name": "테스트"}
-msgs, _ = watch.evaluate(snap(sold_out=True), prev, wl2, [])
+msgs, _ = watch.evaluate(snap(sold_out=True), prev, wl2)
 check("매물있음 → 품절: 가격 알림 0건", len(msgs), 0)
-msgs, _ = watch.evaluate(snap(price=500), {"price": None, "count": 10, "soldOut": True}, wl2, [])
+msgs, _ = watch.evaluate(snap(price=500), {"price": None, "count": 10, "soldOut": True}, wl2)
 check("품절 → 매물있음: 가격 알림 0건", len(msgs), 0)
-
-print("\n[5] 목표가(threshold) — 한 번 울리면 벗어나야 재무장")
-al = [{"id": 7, "type": "threshold", "price": 1200, "dir": "above"}]
-w5 = {"kind_id": 1, "name": "테스트"}
-msgs, st = watch.evaluate(snap(price=1300), prev, w5, al)
-check("1300 ≥ 1200 → 울림", len(msgs), 1)
-check("fired 기록됨", st["fired"].get("7"), True)
-msgs, st = watch.evaluate(snap(price=1350), {**prev, "fired": {"7": True}}, w5, al)
-check("계속 조건 만족 → 재전송 안 함", len(msgs), 0)
-msgs, st = watch.evaluate(snap(price=1100), {**prev, "fired": {"7": True}}, w5, al)
-check("조건 벗어남 → 재무장", st["fired"].get("7"), None)
-check("재무장 시점엔 안 울림", len(msgs), 0)
-msgs, st = watch.evaluate(snap(price=1300), {**prev, "fired": {}}, w5, al)
-check("재무장 후 다시 도달 → 울림", len(msgs), 1)
-
-print("\n[6] 목표가 여유폭(marginPct) — 경계선 진동 억제")
-alm = [{"id": 8, "type": "threshold", "price": 1000, "dir": "above", "marginPct": 10}]
-msgs, st = watch.evaluate(snap(price=950), {**prev, "fired": {"8": True}}, w5, alm)
-check("950 (-5%) → 아직 재무장 안 함", st["fired"].get("8"), True)
-msgs, st = watch.evaluate(snap(price=890), {**prev, "fired": {"8": True}}, w5, alm)
-check("890 (-11%) → 재무장", st["fired"].get("8"), None)
-
-print("\n[8] 목표가가 아닌 옛 형식은 건너뛴다")
-msgs, _ = watch.evaluate(snap(price=1), prev, w5, [{"id": 10, "type": "trend_reversal", "direction": "any"}])
-check("추세전환 알림 0건", len(msgs), 0)
 
 print("\n[9] 조용한 시간대 — 자정을 넘는 구간 포함")
 from datetime import datetime
@@ -140,40 +115,44 @@ print("[11] 천장 기준 신호 — 평균 100 이면 천장 150")
 w11 = {"kind_id": 1, "name": "테스트", "avgPrice": 100, "sellHighAlert": True, "sellHighPct": 90,
        "buyLowAlert": True, "buyLowPct": 60}
 base = {"price": 100, "count": 10, "soldOut": False, "fired": {}}
-msgs, st = watch.evaluate(snap(price=140), base, w11, [])       # 93%
+msgs, st = watch.evaluate(snap(price=140), base, w11)       # 93%
 check("93% → 천장근접 1건", len(msgs), 1)
-check("문구에 천장 150", "천장(150)" in msgs[0], True)
+check("문구에 고점 150", "고점(150)" in msgs[0], True)
 check("sellHigh fired 기록", st["fired"].get("sellHigh"), True)
-msgs, st = watch.evaluate(snap(price=145), {**base, "fired": {"sellHigh": True}}, w11, [])
+msgs, st = watch.evaluate(snap(price=145), {**base, "fired": {"sellHigh": True}}, w11)
 check("계속 천장 근처면 재전송 안 함", len(msgs), 0)
-msgs, st = watch.evaluate(snap(price=110), {**base, "fired": {"sellHigh": True}}, w11, [])  # 73% < 80
+msgs, st = watch.evaluate(snap(price=110), {**base, "fired": {"sellHigh": True}}, w11)  # 73% < 80
 check("80% 아래로 내려오면 재무장", st["fired"].get("sellHigh"), None)
-msgs, st = watch.evaluate(snap(price=80), base, w11, [])        # 53%
+msgs, st = watch.evaluate(snap(price=80), base, w11)        # 53%
 check("53% → 저가 1건", len(msgs), 1)
 check("저가 문구", "살 때" in msgs[0], True)
-msgs, st = watch.evaluate(snap(price=100), {**base, "fired": {"buyLow": True}}, w11, [])  # 67% < 70
+msgs, st = watch.evaluate(snap(price=100), {**base, "fired": {"buyLow": True}}, w11)  # 67% < 70
 check("70% 아래면 아직 재무장 안 함", st["fired"].get("buyLow"), True)
-msgs, st = watch.evaluate(snap(price=110), {**base, "fired": {"buyLow": True}}, w11, [])  # 73% > 70
+msgs, st = watch.evaluate(snap(price=110), {**base, "fired": {"buyLow": True}}, w11)  # 73% > 70
 check("70% 넘으면 재무장", st["fired"].get("buyLow"), None)
-msgs, st = watch.evaluate(snap(price=120), base, w11, [])       # 80% 중간
+msgs, st = watch.evaluate(snap(price=120), base, w11)       # 80% 중간
 check("중간(80%)이면 아무것도 안 울림", len(msgs), 0)
-msgs, st = watch.evaluate(snap(price=140), base, {**w11, "avgPrice": None}, [])
+msgs, st = watch.evaluate(snap(price=140), base, {**w11, "avgPrice": None})
 check("평균가 없으면 천장 신호 없음", len(msgs), 0)
-msgs, st = watch.evaluate(snap(price=140, sold_out=True), base, w11, [])
+msgs, st = watch.evaluate(snap(price=140, sold_out=True), base, w11)
 check("품절이면 천장 신호 없음", len(msgs), 0)
 
 print("")
-print("[12] 되사기 — 판매가 100 이면 85 아래가 남는 구간")
-w12 = {"kind_id": 1, "name": "테스트", "rebuyAlert": True, "mySellPrice": 100}
-msgs, st = watch.evaluate(snap(price=80), base, w12, [])
-check("80 → 되사기 1건 (+5)", len(msgs), 1)
-check("이득 +5 표기", "+5" in msgs[0], True)
-msgs, st = watch.evaluate(snap(price=85), base, w12, [])
-check("85 = 손익분기 → 안 울림", len(msgs), 0)
-msgs, st = watch.evaluate(snap(price=90), {**base, "fired": {"rebuy": True}}, w12, [])
-check("다시 올라가면 재무장", st["fired"].get("rebuy"), None)
-msgs, st = watch.evaluate(snap(price=80), base, {**w12, "mySellPrice": None}, [])
-check("판매가 없으면 되사기 없음", len(msgs), 0)
+print("[12] 재매입 — 판매가 1000(순수령 850), 최소 10% 남아야 표기")
+w12 = {"kind_id": 1, "name": "테스트", "rebuyAlert": True, "mySellPrice": 1000}
+msgs, st = watch.evaluate(snap(price=800), base, w12)
+check("800 (이득 5.9% < 10%) → 마진 미달, 안 울림", len(msgs), 0)
+msgs, st = watch.evaluate(snap(price=765), base, w12)
+check("765 (이득 정확히 10%) → 재매입 1건", len(msgs), 1)
+check("이득 +85 표기", "+85" in msgs[0], True)
+msgs, st = watch.evaluate(snap(price=700), base, w12)
+check("700 (이득 17.6%) → 재매입 1건 (+150)", "+150" in msgs[0], True)
+msgs, st = watch.evaluate(snap(price=850), base, w12)
+check("850 = 손익분기 → 안 울림", len(msgs), 0)
+msgs, st = watch.evaluate(snap(price=800), {**base, "fired": {"rebuy": True}}, w12)
+check("기준(765) 위로 오르면 재무장", st["fired"].get("rebuy"), None)
+msgs, st = watch.evaluate(snap(price=700), base, {**w12, "mySellPrice": None})
+check("판매가 없으면 재매입 신호 없음", len(msgs), 0)
 
 
 # ── [13] 평균가 추정기 + 우선순위 (index.html effectiveAvg 와 같은 규약, 같은 픽스처) ──
@@ -221,7 +200,7 @@ check("아무것도 없으면 None", a, None)
 
 # evaluate 는 avgPrice_effective 를 우선한다
 w13 = {"kind_id": 1, "name": "테스트", "avgPrice": 999, "avgPrice_effective": 100, "sellHighAlert": True}
-msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, w13, [])
+msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, w13)
 check("유효 평균 100 → 천장 150, 140은 93% → 울림", len(msgs), 1)
 
 
@@ -265,9 +244,9 @@ check("같은 경우 하한 100 이 있으면 끌어올리고 ⏰", (round(a, 1)
 print("")
 print("[15] 토글 기본 켜짐 — 키가 없으면 켜진 것으로")
 w15 = {"kind_id": 1, "name": "테스트", "avgPrice_effective": 100}
-msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, w15, [])
+msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, w15)
 check("sellHighAlert 키 없음 → 93% 에 울림", len(msgs), 1)
-msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, {**w15, "sellHighAlert": False}, [])
+msgs, st = watch.evaluate(snap(price=140), {"price": 100, "count": 10, "soldOut": False, "fired": {}}, {**w15, "sellHighAlert": False})
 check("명시적 False 면 안 울림", len(msgs), 0)
 
 print("")

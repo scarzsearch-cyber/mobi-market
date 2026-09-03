@@ -161,6 +161,9 @@ PLATEAU_MIN_CANDLES = 3
 PLATEAU_COUNT_RATIO_MAX = 0.5
 PLATEAU_BAND = (0.75, 1.3)
 CEILING_MULT = 1.5
+# 재매입은 수수료(15%)만 겨우 넘기는 수준(이득 0에 가까움)은 표기하지 않는다 —
+# 순수령(net) 대비 최소 이만큼은 남아야 "재매입할 가치"로 본다 (소유자 지정).
+REBUY_MARGIN_PCT = 10
 
 # 품귀 판정 — index.html 의 SCARCE_*/COUNT_MIN_SAMPLES 와 반드시 같아야 한다.
 # "직전 실행보다 N개 줄었다"가 아니라 "이 아이템의 최근 7일 수량 분포에서 바닥권인가"로 본다.
@@ -468,13 +471,12 @@ def in_quiet_hours(quiet, now_kst):
 
 # ---------------------------------------------------------------- 판정
 
-def evaluate(item, prev, w, alerts):
+def evaluate(item, prev, w):
     """이 아이템에서 이번에 울려야 할 알림 문구들을 만든다.
 
     item : 이번 스냅샷 (API 응답 한 건)
     prev : 지난 실행 때의 값 {price, count, streak_low, streak_high, peak, fired}
     w    : settings.json 의 감시 항목 (index.html slimWatchItem 형식 그대로)
-    alerts: 이 아이템에 걸린 목표가/트레일링 알림들 (alertsByKind[kind_id])
 
     반환: (메시지 리스트, 다음 실행에 넘길 상태)
     """
@@ -508,37 +510,11 @@ def evaluate(item, prev, w, alerts):
             # 24h 로 오히려 늘고 있으면 바닥권이어도 품귀가 아니다(기준선이 밀린 경우).
             state["fired"]["scarce"] = True
             avg_eff = w.get("avgPrice_effective") or w.get("avgPrice")
-            ceil_txt = f" · 천장 {fmt(round(avg_eff * CEILING_MULT))}" if (avg_eff and avg_eff > 0) else ""
+            ceil_txt = f" · 고점 {fmt(round(avg_eff * CEILING_MULT))}" if (avg_eff and avg_eff > 0) else ""
             msgs.append(f"⚠ {name} 매물 {fmt(count)}개 — 최근 7일 중 하위 {pctl:.0f}%로 바닥권"
                         f" (최저가 {fmt(price)}{ceil_txt}) — 마르기 전에 높은 값으로 걸어둘 때")
 
-    # ── 목표가(threshold) / 트레일링 ──
-    # index.html 의 checkPriceAlerts 와 같은 규약: 한 번 울리면 조건을 벗어나야 재무장한다.
-    if price is not None:
-        for a in alerts:
-            aid = str(a.get("id"))
-            atype = a.get("type") or "threshold"
-
-            if atype != "threshold":
-                continue  # 목표가만 남았다 — 예전 형식(trailing/trend_reversal)이 있어도 건너뛴다
-
-            target = a.get("price")
-            if target is None:
-                continue
-            hit = price >= target if a.get("dir") == "above" else price <= target
-            margin = (a.get("marginPct") or 0) / 100
-            if hit:
-                if not state["fired"].get(aid):
-                    state["fired"][aid] = True
-                    word = "이상" if a.get("dir") == "above" else "이하"
-                    msgs.append(f"💰 {name} {fmt(price)} — 목표가 {fmt(target)} {word} 도달")
-            else:
-                released = (price <= target * (1 - margin)) if a.get("dir") == "above" \
-                    else (price >= target * (1 + margin))
-                if state["fired"].get(aid) and released:
-                    state["fired"].pop(aid, None)
-
-    # ── 천장 기준 신호 (v2) — index.html 의 bandPosPct / rebuyInfo 와 같은 규약 ──
+    # ── 고점 기준 신호 (v2) — index.html 의 bandPosPct / rebuyInfo 와 같은 규약 ──
     # 판매가 상한 = 3일 평균 x 1.5 (소유자 실측). 평균가는 사람이 앱에 입력해 settings.json 으로
     # 넘어온다. 한 번 울리면 기준에서 10%p 벗어나야 재무장한다 (경계선 진동 방지).
     # main() 이 추정·보정·하한을 거친 유효 평균을 avgPrice_effective 로 넣어 준다.
@@ -551,24 +527,26 @@ def evaluate(item, prev, w, alerts):
             th = w.get("sellHighPct") or 90
             if pos >= th and not state["fired"].get("sellHigh"):
                 state["fired"]["sellHigh"] = True
-                msgs.append(f"🔴 {name} 최저가 {fmt(price)} = 천장({fmt(ceiling)})의 {pos:.0f}% — 물량이 말랐어요. 천장 근처에 걸어두면 팔릴 때예요")
+                msgs.append(f"🔴 {name} 최저가 {fmt(price)} = 고점({fmt(ceiling)})의 {pos:.0f}% — 물량이 말랐어요. 고점 근처에 걸어두면 팔릴 때예요")
             elif state["fired"].get("sellHigh") and pos < th - 10:
                 state["fired"].pop("sellHigh", None)
         if w.get("buyLowAlert", True):
             th = w.get("buyLowPct") or 60
             if pos <= th and not state["fired"].get("buyLow"):
                 state["fired"]["buyLow"] = True
-                msgs.append(f"🟢 {name} 최저가 {fmt(price)} = 천장({fmt(ceiling)})의 {pos:.0f}% — 천장 대비 싸요. 살 때예요")
+                msgs.append(f"🟢 {name} 최저가 {fmt(price)} = 고점({fmt(ceiling)})의 {pos:.0f}% — 살 때예요")
             elif state["fired"].get("buyLow") and pos > th + 10:
                 state["fired"].pop("buyLow", None)
     sell = w.get("mySellPrice")
     if w.get("rebuyAlert") and sell and sell > 0 and price is not None:
         net = sell * 0.85
+        worth_limit = net * (1 - REBUY_MARGIN_PCT / 100)
         profit = net - price
-        if profit > 0 and not state["fired"].get("rebuy"):
+        worth = price <= worth_limit
+        if worth and not state["fired"].get("rebuy"):
             state["fired"]["rebuy"] = True
-            msgs.append(f"🔁 {name} 최저가 {fmt(price)} < 내 판매가 {fmt(sell)}의 85%({fmt(round(net))}) — 지금 되사면 개당 +{fmt(round(profit))}")
-        elif state["fired"].get("rebuy") and profit <= 0:
+            msgs.append(f"🔁 {name} 최저가 {fmt(price)} ≤ 재매입 기준 {fmt(round(worth_limit))}(내 판매가의 85% 대비 {REBUY_MARGIN_PCT}%↓) — 지금 재매입하면 개당 +{fmt(round(profit))}")
+        elif state["fired"].get("rebuy") and not worth:
             state["fired"].pop("rebuy", None)
 
     return msgs, state
@@ -619,7 +597,6 @@ def main():
         log("⚠ 알림 통로가 없습니다 — 카카오 시크릿도, GITHUB_TOKEN 도 없습니다.")
         return 1
 
-    alerts_by_kind = settings.get("alertsByKind") or {}
     quiet = settings.get("quiet")
     cooldown_min = settings.get("kakaoItemCooldownMin", DEFAULT_ITEM_COOLDOWN_MIN)
     try:
@@ -694,7 +671,7 @@ def main():
                 w_eff["count_pctl"] = pctl
                 w_eff["count_change_24h"] = found.get("count_change_24h")
                 log(f"    수량 {found.get('total_count')}개 = 하위 {pctl:.0f}%")
-        msgs, new_state = evaluate(found, prev, w_eff, alerts_by_kind.get(key) or [])
+        msgs, new_state = evaluate(found, prev, w_eff)
         if learned:
             new_state["learned"] = learned
         items_state[key] = new_state

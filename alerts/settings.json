@@ -10,12 +10,12 @@
       "avgRatio": 1.001271650473612,
       "avgRatioAt": 1788471407724,
       "avgRatioSrc": "manual",
-      "mySellPrice": null,
+      "mySellPrice": 128,
       "sellHighAlert": true,
       "sellHighPct": 90,
       "buyLowAlert": true,
       "buyLowPct": 60,
-      "rebuyAlert": false,
+      "rebuyAlert": true,
       "addedAt": 0
     },
     {
@@ -27,7 +27,7 @@
       "avgRatio": 1.0321838717658065,
       "avgRatioAt": 1788471429518,
       "avgRatioSrc": "manual",
-      "mySellPrice": null,
+      "mySellPrice": 128,
       "sellHighAlert": true,
       "sellHighPct": 90,
       "buyLowAlert": true,

@@ -68,7 +68,6 @@
   .stat .value.tight{font-size:13px; white-space:nowrap;}
   .stat .value.tighter{font-size:11.5px; white-space:nowrap;}
 
-  .analysis-verdict{font-size:16px; font-weight:700; padding-bottom:10px; margin-bottom:6px; border-bottom:1px solid var(--line);}
   .analysis-row{display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:6px 0; font-size:14px;}
   .analysis-row .a-label{color:var(--dim);}
   .analysis-row .a-value{font-family:var(--mono); font-weight:600; text-align:right;}
@@ -101,8 +100,6 @@
   .watch-item button.toggle-on.sellhigh, .watch-item-toggles button.toggle-on.sellhigh{background:var(--down); color:#2a0906; border-color:var(--down); font-weight:700;}
   .watch-item button.toggle-on.buylow, .watch-item-toggles button.toggle-on.buylow{background:var(--up); color:#062012; border-color:var(--up); font-weight:700;}
   .watch-item button.toggle-on.rebuy, .watch-item-toggles button.toggle-on.rebuy{background:var(--accent); color:#1a1208; border-color:var(--accent); font-weight:700;}
-  .watch-item-quickbtns button.detail-btn{border-color:var(--accent); color:var(--accent); font-weight:700;}
-  .watch-item-quickbtns button.detail-btn.toggle-on{background:var(--accent); color:#1a1208;}
   .tools-tabbar{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:10px;}
   .tools-tab-btn{background:transparent; color:var(--dim); border:1px solid var(--line); border-radius:6px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer;}
   .tools-tab-btn.active{background:var(--accent); color:#1a1208; border-color:var(--accent);}
@@ -196,33 +193,40 @@
   <div class="board">
     <div class="board-top">
       <div style="width:100%;">
-        <div class="ticker-row">
-          <span class="ticker" id="tickerId">KIND_ID —</span>
-          <input type="password" id="apiKey" class="api-key-inline" placeholder="API 키" autocomplete="off" onchange="invalidateApiKeyPoolCache(); renderApiKeyPoolHint();">
-          <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('apiKey', this)" title="키 보이기/가리기">👁</button>
-          <span class="fallback-toggle" id="fallbackToggle">API 호출이 안 되면 → JSON 직접 붙여넣기</span>
-        </div>
-        <div class="title-row">
-          <h1 id="itemTitle">아이템을 검색하세요</h1>
-          <details class="mini-details">
-            <summary>차트 조작법 보기</summary>
-            <div class="mini-details-body">
-              <p>차트 위에서 드래그하면 그 구간이 확대돼요.</p>
-              <p>캔들을 탭하면 상세정보가 뜨고, 확대 중엔 "◀ 이전 구간 / 다음 구간 ▶" 버튼으로 좌우 이동할 수 있어요.</p>
-              <p>더블탭(더블클릭)하면 전체로 리셋되고, 확대 중엔 위 "한 단계 뒤로" 버튼으로 되돌아갈 수 있어요 (PC는 우클릭도 가능).</p>
-            </div>
-          </details>
-        </div>
+        <details id="keyDetails" class="mini-details">
+          <summary><span class="ticker" id="tickerId">KIND_ID —</span> <span class="hint" style="margin:0;">· API 키</span></summary>
+          <div class="ticker-row" style="margin-top:6px;">
+            <input type="password" id="apiKey" class="api-key-inline" placeholder="API 키" autocomplete="off" onchange="invalidateApiKeyPoolCache(); renderApiKeyPoolHint();">
+            <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('apiKey', this)" title="키 보이기/가리기">👁</button>
+            <span class="fallback-toggle" id="fallbackToggle">API 호출이 안 되면 → JSON 직접 붙여넣기</span>
+          </div>
+        </details>
       </div>
     </div>
 
+    <div class="section-divider"></div>
+
+    <details id="watchDetails" open>
+      <summary>감시 목록 <span class="count-badge" id="watchCount">0</span></summary>
+      <div class="section-body" id="watchBox">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+          <label class="hint" style="margin:0;">정렬</label>
+          <select id="watchSortSel" onchange="saveWatchSort()"
+                  title="천장 대비 싼 순: 위가 살 때(싸다), 아래가 팔 때(천장 근접). 평균가를 모르는 아이템은 맨 아래로 갑니다.">
+            <option value="default">추가된 순서</option>
+            <option value="band">천장 대비 싼 순</option>
+            <option value="price">현재가 낮은순</option>
+          </select>
+        </div>
+        <div id="watchList" class="watch-list-grid"></div>
+      </div>
+    </details>
     <div class="controls">
       <div style="position:relative; flex:1; min-width:180px;">
         <input type="text" id="itemName" placeholder="아이템 이름 (예: 파동의 영혼석)" value="파동의 영혼석" autocomplete="off" style="width:100%;">
         <ul id="itemSuggestions" style="display:none; position:absolute; top:100%; left:0; right:0; z-index:20; margin:4px 0 0; padding:4px; list-style:none; background:var(--panel); border:1px solid var(--line); border-radius:8px; max-height:220px; overflow-y:auto; box-shadow:0 4px 12px rgba(0,0,0,0.4);"></ul>
       </div>
-      <button id="loadBtnTop">조회</button>
-      <span class="hint inline-hint">※ 조회하면 자동 추가·이름 클릭 시 차트 이동·"알림" 버튼으로 가격 알림 설정</span>
+      <button id="loadBtnTop" title="조회하면 감시 목록에 자동으로 추가됩니다">조회</button>
     </div>
     <div class="hint" id="statusHint"></div>
     <div class="fallback" id="fallbackBox" style="display:none;">
@@ -234,23 +238,6 @@
       <button id="pasteBtn" style="margin-top:8px;">붙여넣은 JSON으로 그리기</button>
     </div>
 
-    <div class="section-divider"></div>
-
-    <details id="watchDetails" open>
-      <summary>감시 목록 <span class="count-badge" id="watchCount">0</span></summary>
-      <div class="section-body" id="watchBox">
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
-          <label class="hint" style="margin:0;">정렬</label>
-          <select id="watchSortSel" onchange="saveWatchSort()">
-            <option value="default">추가된 순서</option>
-            <option value="band">천장 대비 싼 순</option>
-            <option value="price">현재가 낮은순</option>
-          </select>
-          <span class="hint" style="margin:0;">※ 천장 순: 위가 살 때(싸다), 아래가 팔 때(천장 근접). 평균가를 안 넣은 아이템은 맨 아래.</span>
-        </div>
-        <div id="watchList" class="watch-list-grid"></div>
-      </div>
-    </details>
 
     <div class="section-divider"></div>
 
@@ -440,6 +427,17 @@
   <div class="callout" id="snapNote" style="display:none;"></div>
 
   <div class="board chart-box">
+        <div class="title-row">
+          <h1 id="itemTitle">아이템을 검색하세요</h1>
+          <details class="mini-details">
+            <summary>차트 조작법 보기</summary>
+            <div class="mini-details-body">
+              <p>차트 위에서 드래그하면 그 구간이 확대돼요.</p>
+              <p>캔들을 탭하면 상세정보가 뜨고, 확대 중엔 "◀ 이전 구간 / 다음 구간 ▶" 버튼으로 좌우 이동할 수 있어요.</p>
+              <p>더블탭(더블클릭)하면 전체로 리셋되고, 확대 중엔 위 "한 단계 뒤로" 버튼으로 되돌아갈 수 있어요 (PC는 우클릭도 가능).</p>
+            </div>
+          </details>
+        </div>
     <div class="chart-topbar">
       <div class="chart-controls" id="chartControls">
         <select id="daysSel">
@@ -1116,6 +1114,10 @@ function loadStateFromStorage() {
   try {
     const savedKey = localStorage.getItem(LS_KEYS.apiKey);
     if (savedKey) document.getElementById('apiKey').value = savedKey;
+    // 키가 아직 없으면 그 칸을 펼쳐 둔다 — 접어두면 처음 온 사람이 어디에 넣을지 모른다.
+    // 키가 있으면 접힌 채로 둔다: 한 번 넣으면 매일 볼 이유가 없는 줄이다.
+    const kd = document.getElementById('keyDetails');
+    if (kd && !savedKey) kd.open = true;
     const el = document.getElementById('redirectUriHint');
     if (el) el.textContent = kakaoRedirectUri();
   } catch (e) { console.error('[복원 실패] API 키/Redirect URI', e); }
@@ -1958,34 +1960,16 @@ function renderAnalysis({ points, closes, min, max, avg, cur, changePct, devPct,
   const snap = lastSnapshot;
   const lowLiquidity = snap && (snap.soldOut || snap.count <= 3);
 
-  // --- 종합 판단: 정제된 위치/괴리 + 모멘텀 + (있으면) 실시간 24h 변동을 투표로 합산 ---
-  // +1 = "상대적으로 싼/저평가" 신호, -1 = "상대적으로 비싼/고평가" 신호
-  let cheapVotes = 0, expensiveVotes = 0, totalVotes = 0;
-  const castVote = (v) => {
-    totalVotes++;
-    if (v > 0) cheapVotes++;
-    else if (v < 0) expensiveVotes++;
-  };
-  castVote(pctClean <= 30 ? 1 : pctClean >= 70 ? -1 : 0);
-  castVote(devPctClean <= -5 ? 1 : devPctClean >= 5 ? -1 : 0);
-  if (momPct !== null) castVote(momPct <= -3 ? 1 : momPct >= 3 ? -1 : 0);
-  if (snap && snap.pct24h !== null && snap.pct24h !== undefined) {
-    castVote(snap.pct24h <= -5 ? 1 : snap.pct24h >= 5 ? -1 : 0);
-  }
-  if (snap && snap.countChange24h !== null && snap.countChange24h !== undefined) {
-    // 매물이 늘어남(+) = 공급 증가 = 상대적으로 싼 신호, 품귀(-) = 공급 감소 = 비싼 신호
-    castVote(snap.countChange24h >= 10 ? 1 : snap.countChange24h <= -10 ? -1 : 0);
-  }
-  const net = cheapVotes - expensiveVotes;
+  // ⛔ "확실히 저렴/비싼 편" 종합 판단은 삭제했다 (2026-09-03).
+  //   손으로 찍은 임계값 5개(30/70·±5·±3·±5·±10)를 투표로 합산해 싸다/비싸다를 말했는데,
+  //   이 거래소에서 그 질문의 정답은 천장(평균×1.5) 대비 위치 하나뿐이다. 둘이 어긋나서
+  //   같은 아이템·같은 순간에 감시 목록은 "천장의 92% · 팔 때", 여기는 "약간 저렴한 편"을
+  //   동시에 띄우는 것을 실측으로 확인했다. 하필 품귀 구간에서 가장 잘 어긋난다 —
+  //   물량이 마르면 그 주 시세가 통째로 천장 근처에 붙어서, "이번 주 범위의 아래쪽"이
+  //   계속 "싸다"로 읽히기 때문이다. 팔아야 할 때 사라고 말하는 셈이었다.
+  //   여기 남은 통계(요일·시간대·변동성·위치)는 천장이 답하지 못하는 것이라 그대로 둔다.
+  //   ★ 판정을 되살리지 말 것. 되살리려면 천장 기준으로만 계산해야 한다.
   const zoomTooFew = scopeLabel && points.length < 5;
-
-  let headerEmoji, headerText, headerColor;
-  if (zoomTooFew) { headerEmoji = '⚠️'; headerText = `캔들 ${points.length}개뿐 — 표본 부족`; headerColor = 'var(--down)'; }
-  else if (net >= 2) { headerEmoji = '🟢'; headerText = '확실히 저렴한 편'; headerColor = 'var(--up)'; }
-  else if (net === 1) { headerEmoji = '🟢'; headerText = '약간 저렴한 편'; headerColor = 'var(--up)'; }
-  else if (net === 0) { headerEmoji = '⚪'; headerText = '적정 가격'; headerColor = 'var(--dim)'; }
-  else if (net === -1) { headerEmoji = '🔴'; headerText = '약간 비싼 편'; headerColor = 'var(--down)'; }
-  else { headerEmoji = '🔴'; headerText = '확실히 비싼 편'; headerColor = 'var(--down)'; }
 
   const colorVar = c => c === 'up' ? 'var(--up)' : c === 'down' ? 'var(--down)' : c === 'accent' ? 'var(--accent)' : null;
 
@@ -2098,11 +2082,10 @@ function renderAnalysis({ points, closes, min, max, avg, cur, changePct, devPct,
     addRow('최근 흐름', `${streak}번 연속 ${streakDir === 'up' ? '상승' : '하락'} 중`, streakDir === 'up' ? 'up' : 'down');
   }
 
-  if (!zoomTooFew) {
-    addNote(`저가신호 ${cheapVotes} · 고가신호 ${expensiveVotes} · 중립 ${totalVotes - cheapVotes - expensiveVotes}`);
-  } else {
-    addNote('범위를 넓히면 더 믿을 만한 판단이 나와요');
+  if (zoomTooFew) {
+    addWarn(`캔들 ${points.length}개뿐이라 아래 수치는 믿기 어려워요 — 범위를 넓혀보세요`);
   }
+  addNote('싸다/비싸다 판단은 감시 목록의 천장 신호를 보세요 — 이 표는 언제 사고 팔지(요일·시간대·변동성)를 위한 것이에요');
   if (lowLiquidity) {
     addWarn(`⚠ ${snap.soldOut ? '현재 매물 품절' : `현재 매물 ${snap.count}개뿐`} — 실제로 사기 어려울 수 있음`);
   }
@@ -2117,7 +2100,7 @@ function renderAnalysis({ points, closes, min, max, avg, cur, changePct, devPct,
     return `<div class="analysis-row"><span class="a-label">${r.label}</span><span class="a-value"${cv2 ? ` style="color:${cv2}"` : ''}>${r.value}</span></div>`;
   }).join('');
 
-  list.innerHTML = `<div class="analysis-verdict" style="color:${headerColor}">${headerEmoji} ${headerText}</div>` + rowsHtml;
+  list.innerHTML = rowsHtml;
   box.style.display = 'block';
 }
 
@@ -4314,6 +4297,23 @@ function countInfo(w) {
   return { text: base, color: 'var(--dim)', title: `평소 수준이에요. ${tail}` };
 }
 
+// 평균가 입력칸을 펼쳐 둘지. 근거가 약할 때(⏰)만 기본으로 보여준다 —
+// 자동 추정·자동보정이 자리잡은 뒤로는 대부분 손댈 일이 없는데, 칸이 늘 떠 있으면
+// "내가 뭔가 입력해야 하나" 싶게 만들고 카드마다 한 줄씩 자리를 먹는다.
+function avgNeedsInput(w) {
+  const ea = effectiveAvg(w);
+  return ea.avg === null || ea.recalib;
+}
+
+// 평균 글자를 누르면 입력칸이 열린다 — 자동값이 틀렸을 때 언제든 고칠 수 있게.
+function toggleAvgInput(kindId) {
+  const box = document.getElementById(`wAvgEdit_${kindId}`);
+  if (!box) return;
+  const show = box.style.display === 'none';
+  box.style.display = show ? 'flex' : 'none';
+  if (show) { const i = box.querySelector('input'); if (i) i.focus(); }
+}
+
 // ⚠ 품귀 버튼에 붙는 설명 — 지금 이 아이템이 어디쯤인지까지 같이 보여준다.
 // 임계값 입력칸이 없어졌으므로, 기준이 무엇인지는 여기서만 알 수 있다.
 function scarceTitle(w) {
@@ -4447,7 +4447,7 @@ function learnRatioFromPlateau(w) {
 function avgLine(w) {
   const ea = effectiveAvg(w);
   if (ea.avg === null) return '평균 —';
-  const tag = { '입력': '입력', '자동': '자동보정', '보정': '보정', '미보정': '미보정 ±15%', '옛입력': '옛 입력' }[ea.source.split('·')[0]] || ea.source;
+  const tag = { '입력': '직접 넣음', '자동': '자동보정', '보정': '보정', '미보정': '미보정 ±15%', '옛입력': '옛 입력' }[ea.source.split('·')[0]] || ea.source;
   return `평균 <b style="color:var(--text);">${Math.round(ea.avg).toLocaleString()}</b> <span style="opacity:.75;">${tag}${ea.source.includes('하한') ? '·하한' : ''}</span>${ea.recalib ? ' ⏰' : ''}`;
 }
 function avgTitle(w) {
@@ -4650,19 +4650,20 @@ function renderWatchList() {
           <span class="alert-hit" id="wFired_${w.kind_id}" style="display:${firedCount ? 'inline' : 'none'};">${firedCount ? `🔔 ${firedCount}` : ''}</span>
         </div>
         <div class="watch-item-extra" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
-          <span id="wAvg_${w.kind_id}" title="${escHtml(avgTitle(w))}">${avgLine(w)}</span>
-          <input type="number" min="0" step="any" value="" placeholder="게임 평균 입력→보정" style="width:118px; padding:3px 6px; font-size:11.5px;" onchange="setAvgPrice(${w.kind_id}, this.value); this.value='';" title="게임에서 보이는 '평균 판매가'를 넣으면 이 아이템의 추정 오차를 학습해요. 한 번이면 되고, ⏰ 가 뜨면 다시 한 번.">
+          <span class="w-count" id="wCount_${w.kind_id}" style="color:${countCell.color};" title="${escHtml(countCell.title)}">${countCell.text}</span>
+          <span id="wAvg_${w.kind_id}" onclick="toggleAvgInput(${w.kind_id})" style="cursor:pointer;" title="${escHtml(avgTitle(w))}">${avgLine(w)}</span>
           <span id="wCeil_${w.kind_id}">${ceilingOf(w) ? `천장 <b style="color:var(--text);">${ceilingOf(w).toLocaleString()}</b>` : '천장 —'}</span>
           <span id="wRebuy_${w.kind_id}" style="color:${rb ? (rb.profit > 0 ? 'var(--up)' : 'var(--dim)') : 'var(--dim)'};">${rb ? `되사기 ${rb.profit > 0 ? '+' : ''}${Math.round(rb.profit).toLocaleString()}/개` : ''}</span>
-        </div>
-        <div class="watch-item-extra" style="display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--dim); padding:0 10px 6px; font-family:var(--mono);">
-          <span class="w-count" id="wCount_${w.kind_id}" style="color:${countCell.color};" title="${escHtml(countCell.title)}">${countCell.text}</span>
           <span id="wRange1h_${w.kind_id}">${range1hTxt}</span>
           <span id="wRange24h_${w.kind_id}">${rangeTxt}</span>
         </div>
+        <div class="watch-item-extra" id="wAvgEdit_${w.kind_id}" style="display:${avgNeedsInput(w) ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--dim); padding:0 10px 6px;">
+          <input type="number" min="0" step="any" value="" placeholder="게임 평균 판매가" style="width:130px; padding:3px 6px; font-size:11.5px;" onchange="setAvgPrice(${w.kind_id}, this.value); this.value='';" title="게임에서 보이는 '평균 판매가'를 넣으면 추정 오차를 학습해요. 한 번이면 됩니다.">
+          <span class="hint" style="margin:0;">넣으면 천장이 정확해져요</span>
+        </div>
         <div class="watch-item-quickbtns">
-          <button class="ghost${isFocus ? ' toggle-on' : ''}" onclick="toggleFocusWatch(${w.kind_id})" title="집중 감시 — 최대 ${FOCUS_MAX_ITEMS}개까지 동시에 ${FOCUS_INTERVAL_MS / 1000}초마다 갱신 (현재 ${focusKindIds.size}/${FOCUS_MAX_ITEMS})">🎯${isFocus ? ' 집중감시중' : ''}</button>
-          <button class="ghost detail-btn${w.alertPanelOpen ? ' toggle-on' : ''}" onclick="toggleAlertPanel(${w.kind_id})">${w.alertPanelOpen ? '▾' : '▸'} 알림 설정${alerts.length ? ` (${alerts.length})` : ''}</button>
+          <button class="ghost${isFocus ? ' toggle-on' : ''}" onclick="toggleFocusWatch(${w.kind_id})" title="집중 감시 — 최대 ${FOCUS_MAX_ITEMS}개까지 동시에 ${FOCUS_INTERVAL_MS / 1000}초마다 갱신 (현재 ${focusKindIds.size}/${FOCUS_MAX_ITEMS})">🎯 ${isFocus ? '빠른갱신 중' : '빠른갱신'}</button>
+          <button class="ghost${w.alertPanelOpen ? ' toggle-on' : ''}" onclick="toggleAlertPanel(${w.kind_id})" title="천장근접·저가·품귀는 이미 켜져 있어요. 여기선 목표가처럼 직접 정하는 것만 손보면 됩니다.">${w.alertPanelOpen ? '▾' : '▸'} 알림 설정${alerts.length ? ` (${alerts.length})` : ''}</button>
           <button class="ghost" onclick="removeWatchItem(${w.kind_id})">삭제</button>
         </div>
         ${w.alertPanelOpen ? `

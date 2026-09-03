@@ -105,7 +105,6 @@
     }
   ],
   "removedKinds": {},
-  "alertsByKind": {},
   "quiet": {
     "enabled": false,
     "start": "23:00",

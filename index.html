@@ -142,6 +142,15 @@
   }
   .fallback-toggle{color:var(--dim); font-size:13px; cursor:pointer; text-decoration:underline; margin-top:8px; display:inline-block;}
   .hint{color:var(--dim); font-size:13px; margin-top:6px; line-height:1.5;}
+  /* 가이드는 "가끔 열어서 읽는 글"이라 본문 취급을 한다 — 힌트용 흐린 회색(--dim)으로
+     두면 정작 읽어야 할 때 눈이 아프다. 색은 본문색, 크기는 카드 글씨보다 한 단계 크게. */
+  .faq-body{color:var(--text); font-size:15px; line-height:1.75;}
+  .faq-body p{margin:0 0 10px;}
+  .faq-lead{font-size:16px; font-weight:600; padding-bottom:10px; border-bottom:1px solid var(--line);}
+  .faq-body h4{margin:18px 0 6px; font-size:15px; color:var(--accent); font-weight:700;}
+  .faq-body h4:first-of-type{margin-top:10px;}
+  .faq-list{margin:0 0 10px; padding-left:18px;}
+  .faq-list li{margin-bottom:7px;}
   .callout{
     background:rgba(207,157,85,0.10); border:1px solid var(--accent); border-radius:8px;
     padding:10px 14px; font-size:13px; color:var(--text); line-height:1.5; margin-top:8px;
@@ -286,11 +295,14 @@
               <button class="ghost" id="kakaoLoginBtn" onclick="kakaoLogin()" disabled>카카오 로그인</button>
               <button class="ghost" id="kakaoTestBtn" onclick="kakaoSendTest()" disabled>테스트 전송</button>
             </div>
-            <div class="hint">
-              Kakao Developers(developers.kakao.com) → 내 애플리케이션 → 앱 키에서 <b>JavaScript 키</b>와 <b>REST API 키</b>를 둘 다 여기에 입력하세요.
-              <b>플랫폼 키 → JavaScript 키 → JavaScript SDK 도메인</b>과 <b>앱 설정 → 카카오 로그인 → Redirect URI</b> 두 곳에 지금 이 페이지 주소(<code id="redirectUriHint"></code>)를 정확히 등록해야 로그인이 됩니다.
-              "카카오 로그인 → 동의항목"에서 "카카오톡 메시지 전송"을 사용 설정으로 켜둬야 합니다.
-            </div>
+            <details class="mini-details">
+              <summary>카카오 설정하는 법</summary>
+              <div class="mini-details-body">
+                <p>Kakao Developers(developers.kakao.com) → 내 애플리케이션 → 앱 키에서 <b>JavaScript 키</b>와 <b>REST API 키</b>를 둘 다 위 칸에 입력하세요.</p>
+                <p><b>JavaScript SDK 도메인</b>과 <b>카카오 로그인 → Redirect URI</b> 두 곳에 이 페이지 주소(<code id="redirectUriHint"></code>)를 정확히 등록해야 로그인이 됩니다.</p>
+                <p>"카카오 로그인 → 동의항목"에서 <b>카카오톡 메시지 전송</b>을 켜두셔야 해요.</p>
+              </div>
+            </details>
             <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
               <span style="min-width:120px;">🌙 조용한 시간대</span>
               <input type="checkbox" id="quietEnabled" onchange="saveQuietHours()">
@@ -298,13 +310,13 @@
               <span>~</span>
               <input type="time" id="quietEnd" value="08:00" onchange="saveQuietHours()" style="width:90px;">
             </div>
-            <div class="hint" style="margin:0;">이 시간대엔 카카오톡만 억제돼요 (브라우저 알림/소리는 그대로 울립니다).</div>
+            <div class="hint" style="margin:0;">이 시간대엔 카톡만 안 와요 (브라우저 알림·소리는 그대로).</div>
             <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
               <span style="min-width:120px;">⏳ 동일 아이템 재알림 간격</span>
               <input type="number" id="kakaoItemCooldownMinInput" value="30" min="0" step="5" style="width:70px;" onchange="saveKakaoItemCooldown()">
               <span>분</span>
             </div>
-            <div class="hint" style="margin:0;">한 아이템에 카톡이 한 번 가면, 이 시간 동안은 같은 아이템으로 조건이 다시 맞아도 카톡을 또 보내지 않아요 (0으로 두면 매번 전송). 브라우저 알림/소리는 이 설정과 무관하게 항상 울려요.</div>
+            <div class="hint" style="margin:0;">같은 아이템 카톡은 이 시간 동안 한 번만 (0이면 매번). 브라우저 알림·소리는 무관.</div>
             <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
               <button class="ghost" id="kakaoHistoryToggleBtn" onclick="toggleKakaoHistory()">📜 알림 이력 보기</button>
               <span class="hint" id="kakaoQuotaHint" style="margin:0;"></span>
@@ -330,37 +342,30 @@
               <button class="ghost" onclick="document.getElementById('importFileInput').click()">가져오기</button>
               <input type="file" id="importFileInput" accept="application/json" style="display:none;" onchange="importSettings(this.files[0])">
             </div>
-            <div class="hint" style="margin:0;">감시 목록·알림 설정·조용한 시간대 등을 파일로 저장해뒀다가, 브라우저를 바꾸거나 캐시가 날아갔을 때 불러올 수 있어요. (API 키·카카오 로그인 정보는 보안상 포함되지 않아요 — 새 기기에선 직접 입력해주세요.)</div>
+            <div class="hint" style="margin:0;">브라우저를 바꾸거나 캐시가 날아갔을 때를 대비한 파일 백업이에요. (API 키·카카오 로그인은 보안상 빠집니다)</div>
             <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
               <span style="min-width:120px;">🤖 서버 감시 동기화</span>
               <span class="hint" id="settingsSyncStatus" style="margin:0;">확인 중…</span>
               <button class="ghost" id="syncNowBtn" onclick="syncSettingsToRepo()" style="display:none;">지금 올리기</button>
             </div>
             <div class="watch-alert-subform">
-              <span class="hint" style="margin:0; min-width:100px;">토큰 없이 올리기</span>
-              <button class="ghost" onclick="openSettingsOnGithub()">📤 GitHub에 올리기 ↗</button>
-              <button class="ghost" onclick="copyServerSettings()">📋 복사만</button>
-            </div>
-            <div class="hint" style="margin:0 0 8px;">
-              토큰을 안 쓰실 거면 <b>[GitHub에 올리기]</b> 한 번이면 됩니다 — 편집기가 열리고, 내용이 이미
-              채워져 있으면 초록색 <b>Commit</b> 버튼만 누르세요. 비어 있으면 붙여넣기(Ctrl+V) 후 Commit 하시면 되고요
-              (누를 때 클립보드에도 항상 같이 담아둡니다).
-            </div>
-            <div class="watch-alert-subform">
-              <input type="password" id="ghToken" placeholder="GitHub 토큰 (선택)" autocomplete="off" onchange="saveGhToken()">
+              <input type="password" id="ghToken" placeholder="GitHub 토큰 (넣어두면 자동)" autocomplete="off" onchange="saveGhToken()">
               <button type="button" class="ghost key-eye" onclick="toggleKeyVisibility('ghToken', this)" title="키 보이기/가리기">👁</button>
             </div>
-            <div class="hint" style="margin:0;">
-              탭을 닫아도 오는 폰 알림은 저장소의 <code>alerts/settings.json</code>을 보고 돌아요. 이 칸에 토큰을 넣어두면
-              감시 목록·알림 조건을 바꿀 때마다 <b>화면이 알아서 그 파일을 갱신</b>해서, 손으로 내보내고 올릴 일이 없어집니다.
-              <br><br>
-              토큰은 <b>Fine-grained personal access token</b>으로 만들고 <b>이 저장소 하나만</b> 대상으로,
-              권한은 <b>Contents: Read and write</b> 하나만 주세요. 그렇게 하면 혹시 새더라도 이 게임 저장소 말고는
-              아무것도 못 건드립니다(계정 전체 권한이 아니에요). 만료일도 짧게 잡아두시고, 언제든 한 번에 폐기할 수 있어요.
-              <br>
-              토큰을 안 넣어도 됩니다 — 그 경우엔 서버 설정이 여기와 달라졌을 때 <b>알려주기만</b> 하고,
-              반영은 아래 [내보내기]로 받은 파일을 <code>alerts/settings.json</code>으로 올리시면 돼요.
-            </div>
+            <details class="mini-details">
+              <summary>토큰 없이 올리기 · 토큰 만드는 법</summary>
+              <div class="mini-details-body">
+                <div class="watch-alert-subform" style="margin:6px 0;">
+                  <button class="ghost" onclick="openSettingsOnGithub()">📤 GitHub에 올리기 ↗</button>
+                  <button class="ghost" onclick="copyServerSettings()">📋 복사만</button>
+                </div>
+                <p>[GitHub에 올리기]를 누르면 편집기가 열려요. 내용이 채워져 있으면 초록색 <b>Commit</b>만,
+                비어 있으면 붙여넣기(Ctrl+V) 후 Commit 하시면 됩니다(클립보드에도 같이 담깁니다).</p>
+                <p>토큰은 <b>Fine-grained personal access token</b>으로, <b>이 저장소 하나만</b> 대상으로 잡고
+                권한은 <b>Contents: Read and write</b> 하나만 주세요. 그러면 혹시 새더라도 이 저장소 말고는
+                아무것도 못 건드립니다.</p>
+              </div>
+            </details>
             <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
               <span style="min-width:120px;">🎨 이평선 스타일</span>
             </div>
@@ -381,7 +386,7 @@
               <span style="min-width:70px;">HALO 명암</span>
               <input type="number" id="maStyleHaloOpacity" value="0.6" min="0" max="1" step="0.05" style="width:60px;" onchange="saveMaStyle()">
             </div>
-            <div class="hint" style="margin:0;">HALO는 이평선 뒤에 깔리는 검은 외곽선이에요 (0으로 두면 외곽선 없이 선만 나와요). 값 바꾸면 차트에 바로 반영돼요.</div>
+            <div class="hint" style="margin:0;">HALO = 이평선 뒤 검은 외곽선 (0이면 없음).</div>
             <div class="watch-alert-form" style="border-top:1px dashed var(--line); padding-top:8px;">
               <span style="min-width:120px;">🔁 API 키 로테이션</span>
               <button type="button" class="ghost key-eye" onclick="toggleExtraKeysVisibility(this)" title="키 보이기/가리기">👁</button>
@@ -393,14 +398,32 @@
 
         <div id="tab-faq" class="tools-tab-panel" style="display:none;">
           <div class="watch-alert-panel" style="margin-left:0;">
-            <div class="hint" style="margin:0;">
-              <b>1. 모비라이프 API 키</b> — 화면 위쪽 "API 키" 칸에 본인 키를 입력하세요. 없으면 발급처에서 먼저 받아야 해요.<br><br>
-              <b>2. 아이템 감시하기</b> — 아이템 이름을 검색해 [조회]를 누르면 자동으로 감시 목록에 추가돼요. 목록에서 아이템을 클릭하면 그 아이템 차트로 바로 이동해요.<br><br>
-              <b>3. 브라우저 알림</b> — "🔔 알림 방식"에서 "알림 켜기"를 누르면 조건 도달 시 윈도우/맥 알림이 떠요. 카카오톡 설정 없이도 이것만으로 충분히 쓸 수 있어요.<br><br>
-              <b>4. 카카오톡 알림(선택)</b> — 폰으로도 받고 싶으면 Kakao Developers(developers.kakao.com)에서 앱을 만들고 JavaScript 키·REST API 키를 위 칸에 입력하세요. 이때 <b>플랫폼 도메인</b>과 <b>Redirect URI</b>를 지금 이 페이지 주소로 정확히 등록해야 하고, <b>동의항목에서 "카카오톡 메시지 전송"</b>을 켜둬야 해요. 이 단계가 좀 까다로우니, 안 되면 편하게 다시 물어보세요.<br><br>
-              <b>5. 천장 신호</b> — 이 거래소는 12시간마다 3일 평균가를 재고, 판매가 상한(천장)은 평균의 1.5배예요. 아이템 카드에 게임에서 보이는 <b>평균 판매가</b>를 넣으면 천장과 "천장의 몇 %"가 자동으로 뜹니다. 🔴 천장근접은 팔 때(물량이 말랐다), 🟢 저가는 살 때, 🔁 되사기는 내가 판 가격의 85% 아래(수수료 15% 감안)예요. ⚠ 품귀는 매물이 <b>그 아이템 기준으로</b> 바닥권(최근 7일 중 하위 20%)에 들어섰을 때 울려요 — 마르면 가격이 오르니 완전히 마르기 전에 높은 값으로 걸어두라는 뜻이고, 개수를 정해줄 필요 없이 아이템마다 자동으로 맞춰집니다. 💰 목표가는 원하는 값을 직접 거는 알림이에요.<br><br>
-              <b>6. 수량 색</b> — 감시 목록의 매물 수량에 색이 붙어요. <span style="color:var(--down);">빨강 = 매우 적음</span>(가격 오를 자리), <span style="color:var(--accent);">주황 = 적음</span>, <span style="color:var(--up);">초록 = 넉넉함</span>(가격 눌릴 자리). 이것도 그 아이템의 최근 7일 분포 기준이라, 평소 500개인 아이템의 100개와 평소 5개인 아이템의 100개를 정반대로 읽어요.<br><br>
-              <b>7. 탭을 닫아도 돼요</b> — 서버(GitHub Actions)가 10분마다 따로 감시해서 조건이 맞으면 카카오톡으로 보내요. 탭을 열어두면 그 위에 브라우저 알림·소리가 더 빨리 붙고, 카드의 천장·되사기 숫자도 실시간으로 갱신돼요. 감시 목록이나 평균가를 바꿨으면 ⚙️ 설정/백업의 [GitHub에 올리기]로 서버에도 반영해 주세요.
+            <div class="faq-body">
+              <p class="faq-lead">이 화면이 하는 일은 하나예요 — <b>지금 팔 때인지 살 때인지</b>를 알려주는 것.</p>
+              <h4>천장이 뭔가요</h4>
+              <p>이 거래소는 12시간마다 최근 3일 평균가를 다시 재고, <b>판매 가격의 상한(천장) = 평균 × 1.5</b> 예요.
+              가격은 이 천장을 절대 못 넘습니다. 그래서 <b>“지금 최저가가 천장의 몇 %인가”</b>가 싸다·비싸다를 재는 유일하게 정확한 잣대예요.</p>
+              <h4>카드에 뜨는 신호</h4>
+              <ul class="faq-list">
+                <li><b style="color:var(--down);">🔴 천장 근접</b> — <b>팔 때.</b> 물량이 말라서 천장 근처까지 붙었어요. 천장 가까이 걸어두면 팔립니다.</li>
+                <li><b style="color:var(--up);">🟢 저가</b> — <b>살 때.</b> 천장 대비 싸요.</li>
+                <li><b style="color:var(--accent);">⚠ 품귀</b> — 매물이 <b>그 아이템 기준</b> 바닥권(최근 7일 중 하위 20%)에 들어섰어요. 완전히 마르기 전에 높은 값으로 미리 걸어두라는 뜻입니다. 개수를 정해줄 필요 없이 아이템마다 자동으로 맞춰져요.</li>
+                <li><b>🔁 되사기</b> — 내가 판 가격의 85% 아래로 내려왔어요 (수수료 15% 떼고도 남는 구간).</li>
+                <li><b>💰 목표가</b> — 내가 직접 정한 값에 닿으면 알려줘요.</li>
+              </ul>
+              <h4>수량에 붙는 색</h4>
+              <p>매물이 마르면 가격이 오릅니다. 그래서 수량은 가격보다 <b>먼저</b> 움직여요.
+              <b style="color:var(--down);">빨강 = 매우 적음</b>(오를 자리) ·
+              <b style="color:var(--accent);">주황 = 적음</b> ·
+              <b style="color:var(--up);">초록 = 넉넉함</b>(눌릴 자리).
+              절대 개수가 아니라 <b>그 아이템의 평소와 비교</b>한 거예요 — 평소 500개인 아이템의 100개와 평소 5개인 아이템의 100개는 정반대 뜻이니까요.</p>
+              <h4>평균가는 안 넣어도 되나요</h4>
+              <p>네. 앱과 서버가 스스로 추정하고, 물량이 마른 순간을 잡아 스스로 보정해요.
+              카드에 <b>⏰</b> 가 떴을 때만 게임의 평균 판매가를 한 번 넣어주시면 그때부터 더 정확해집니다.</p>
+              <h4>탭을 닫아도 돼요</h4>
+              <p>서버가 10분마다 따로 감시해서 조건이 맞으면 카카오톡으로 보내요. 컴퓨터를 꺼도 폰으로 옵니다.
+              탭을 열어두면 그 위에 브라우저 알림·소리가 더 빨리 붙고 카드 숫자도 실시간으로 갱신돼요.</p>
+            </div>
             </div>
           </div>
         </div>

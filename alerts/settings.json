@@ -49,7 +49,7 @@
       "sellHighPct": 70,
       "buyLowAlert": false,
       "buyLowPct": 60,
-      "rebuyAlert": true,
+      "rebuyAlert": false,
       "addedAt": 0
     },
     {

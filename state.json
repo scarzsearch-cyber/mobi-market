@@ -1,0 +1,80 @@
+{
+ "items": {
+  "281479538461834": {
+   "count": 8327,
+   "fired": {
+    "scarce": true,
+    "sellHigh": true
+   },
+   "learned": {
+    "ratio": 0.7955897032309125,
+    "ratioAt": 1789417982.0640543,
+    "src": "auto"
+   },
+   "price": 29,
+   "soldOut": false
+  },
+  "281480597107872": {
+   "count": 1870,
+   "fired": {
+    "buyLow": true
+   },
+   "learned": {
+    "ratio": 1.0497170598277112,
+    "ratioAt": 1789454543.8050199,
+    "src": "auto"
+   },
+   "price": 20,
+   "soldOut": false
+  },
+  "281480675678393": {
+   "count": 16060,
+   "fired": {
+    "buyLow": true
+   },
+   "price": 35,
+   "soldOut": false
+  },
+  "281480871837308": {
+   "count": 19978,
+   "fired": {
+    "buyLow": true
+   },
+   "price": 28,
+   "soldOut": false
+  },
+  "281481249153703": {
+   "count": 900,
+   "fired": {},
+   "price": 18,
+   "soldOut": false,
+   "streak_high": 0,
+   "streak_low": 0
+  },
+  "281481283031319": {
+   "count": 13,
+   "fired": {},
+   "price": 379985,
+   "soldOut": false
+  },
+  "281481304423231": {
+   "count": 14131,
+   "fired": {},
+   "learned": {
+    "ratio": 0.7700337385145481,
+    "ratioAt": 1790102948.3605962,
+    "src": "auto"
+   },
+   "price": 48,
+   "soldOut": false
+  }
+ },
+ "lastRunAt": "2026-09-27T01:27:45+09:00",
+ "lastSentAt": {
+  "281479538461834": 1790089558.8016737,
+  "281480597107872": 1789996102.4542527,
+  "281480675678393": 1790318474.350312,
+  "281480871837308": 1789971965.061186,
+  "281481304423231": 1790089558.8016737
+ }
+}

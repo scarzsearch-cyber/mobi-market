@@ -321,6 +321,28 @@ def effective_avg(w, est, floor_avg, plateau_avg, now_ts, learned=None):
 
 # ---------------------------------------------------------------- 카카오
 
+# 응답 전체나 error_description 은 토큰/앱 키를 포함할 수 있다.
+# 확인된 고정 코드만 로그에 남기고, 낯선 값은 원문 없이 분류한다.
+KAKAO_REFRESH_HINTS = {
+    "KOE010": "client_secret 누락 또는 불일치",
+    "KOE101": "앱 키 타입 또는 값 확인 필요",
+    "KOE237": "토큰 요청 제한",
+    "KOE322": "refresh token 없음 또는 만료",
+}
+KAKAO_OAUTH_ERRORS = frozenset({"invalid_client", "invalid_grant", "misconfigured"})
+
+
+def kakao_refresh_error(status, body):
+    safe_status = status if type(status) is int else "unknown"
+    code = body.get("error_code") if isinstance(body, dict) else None
+    error = body.get("error") if isinstance(body, dict) else None
+    safe_code = code if isinstance(code, str) and code in KAKAO_REFRESH_HINTS else "unrecognized"
+    safe_error = error if isinstance(error, str) and error in KAKAO_OAUTH_ERRORS else "unrecognized"
+    hint = KAKAO_REFRESH_HINTS.get(safe_code, "원인 미확정")
+    return (f"카카오 토큰 갱신 실패 (HTTP {safe_status}; "
+            f"kakao_code={safe_code}; oauth_error={safe_error}; {hint})")
+
+
 def kakao_access_token(rest_key, refresh_token):
     """refresh_token 으로 access_token 을 받아온다.
 
@@ -338,10 +360,15 @@ def kakao_access_token(rest_key, refresh_token):
         method="POST", data=data,
         headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
     )
-    if status != 200 or not isinstance(body, dict) or "access_token" not in body:
-        # body 를 찍지 않는다 — 오류 응답에 토큰 조각이 섞여 올 수 있다.
-        return None, None, f"카카오 토큰 갱신 실패 (HTTP {status})"
-    return body["access_token"], body.get("refresh_token"), None
+    if status != 200 or not isinstance(body, dict):
+        return None, None, kakao_refresh_error(status, body)
+    access = body.get("access_token")
+    refreshed = body.get("refresh_token")
+    if (not isinstance(access, str) or not access.strip()
+            or (refreshed is not None and
+                (not isinstance(refreshed, str) or not refreshed.strip()))):
+        return None, None, "카카오 토큰 갱신 실패 (HTTP 200; 응답 형식 오류)"
+    return access, refreshed, None
 
 
 def kakao_send(access_token, text, link_url):
@@ -352,13 +379,16 @@ def kakao_send(access_token, text, link_url):
         "button_title": "차트 보기",
     }
     data = urllib.parse.urlencode({"template_object": json.dumps(template, ensure_ascii=False)}).encode("utf-8")
-    status, _ = _request(
+    status, body = _request(
         "https://kapi.kakao.com/v2/api/talk/memo/default/send",
         method="POST", data=data,
         headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
                  "Authorization": "Bearer " + access_token},
     )
-    return status == 200, status
+    # 200 이더라도 카카오의 명시적인 성공 응답만 전송 완료로 기록한다.
+    # 응답 유실/형식 오류는 성공을 확인할 수 없다. 여기서 자동 재전송하지 않는다.
+    result = body.get("result_code") if isinstance(body, dict) else None
+    return status == 200 and type(result) is int and result == 0, status
 
 
 # ---------------------------------------------------------------- GitHub 이슈 알림 (카톡 없이)
@@ -681,7 +711,8 @@ def main():
     # ── 알림 전송 (조용한 시간대엔 억제 — index.html 과 같은 규약) ──
     sent_state = state.get("lastSentAt") or {}
     sent_count = 0
-    token_note = None
+    send_failures = 0
+    kakao_auth_attempted = False
 
     if pending and not quiet_now:
         due = []
@@ -696,13 +727,16 @@ def main():
             # 통로별로 한 번만 준비한다 (토큰 교환·이슈 조회를 아이템마다 반복하지 않게).
             access = issue_no = None
             if use_kakao:
+                kakao_auth_attempted = True
                 access, new_refresh, err = kakao_access_token(rest_key, refresh_token)
                 if err:
                     log("⚠ " + err)
+                    log("카카오 인증: 실패 · 알림 전송 0건 (다른 통로로 자동 우회하지 않음)")
                     return 1  # 알림 채널이 죽은 건 진짜 실패 — 메일이 오게 둔다
+                log("카카오 인증: 성공")
                 if new_refresh and new_refresh != refresh_token:
-                    token_note = ("♻ 카카오가 새 refresh 토큰을 발급했습니다 — 시크릿 "
-                                  "KAKAO_REFRESH_TOKEN 을 갱신하지 않으면 두 달 안에 알림이 멈춥니다.")
+                    log("♻ 카카오가 새 refresh 토큰을 발급했습니다. 값은 출력·저장하지 않았습니다. "
+                        "다음 실행도 기존 KAKAO_REFRESH_TOKEN 시크릿을 사용하므로 토큰 유지 관리가 필요합니다.")
             else:
                 issue_no = find_or_create_issue(gh_token, gh_repo)
                 if not issue_no:
@@ -722,7 +756,8 @@ def main():
                     sent_count += 1
                     log(f"  ✓ {name}: {where} {len(msgs)}건 전송")
                 else:
-                    log(f"  ⚠ {name}: {where} 전송 실패 (HTTP {st})")
+                    send_failures += 1
+                    log(f"  ⚠ {name}: {where} 전송 성공 미확인 (HTTP {st}) — 자동 재전송하지 않습니다.")
     elif pending:
         log(f"  · 조용한 시간대라 {len(pending)}개 아이템의 알림을 억제했습니다(상태는 갱신).")
 
@@ -734,9 +769,11 @@ def main():
     if learned_pub:
         log(f"학습 계수 {len(learned_pub)}개를 learned.json 에 남겼습니다 (바뀐 게 있을 때만 커밋됩니다).")
 
-    log(f"완료 — 조건 충족 {len(pending)}개 · 전송 {sent_count}건 · 조회 실패 {api_failures}건")
-    if token_note:
-        log(token_note)
+    if use_kakao and not kakao_auth_attempted:
+        log("카카오 인증: 미시도 (보낼 알림 없음) — 이 실행은 인증 상태를 검증하지 않았습니다.")
+    log(f"완료 — 조건 충족 {len(pending)}개 · 전송 {sent_count}건 · 조회 실패 {api_failures}건 · 전송 성공 미확인 {send_failures}건")
+    if send_failures:
+        return 1
     # 전부 실패했으면 진짜 문제(키 만료 등) — 실패로 올려서 메일이 오게 한다
     if pool.dead:
         log(f"⚠ 무효(401)로 확인된 키 {len(pool.dead)}개를 이번 실행에서 제외했습니다 — 시크릿을 확인해주세요.")
